@@ -262,10 +262,10 @@ input.pi:focus{outline:none;border-color:#9c27b0;background:#fff}
           </div>
           <div class="manual-section">
             <h3>一括入力の使い方</h3>
-            <div class="manual-row"><span class="manual-key">昨対100%</span>「昨対100%で一括入力」ボタンで昨年実績をそのまま全日付にセット。初期値として使えます</div>
-            <div class="manual-row"><span class="manual-key">昨対X%</span>例えば「105」と入力してボタンを押すと昨対105%の数値が一括入力されます</div>
-            <div class="manual-row"><span class="manual-key">店舗・週の絞り込み</span>プルダウンで特定店舗・特定週に絞って一括入力できます</div>
-            <div class="manual-row"><span class="manual-key">消去</span>選択範囲の入力をまとめて削除します</div>
+            <div class="manual-row"><span class="manual-key">昨対100%</span>「昨対100%で計画を一括入力」ボタンで昨年実績をそのまま全日付の計画にセットします</div>
+            <div class="manual-row"><span class="manual-key">昨対X%</span>例えば「105」と入力してボタンを押すと昨対105%の数値が計画に一括入力されます</div>
+            <div class="manual-row"><span class="manual-key">店舗・週の絞り込み</span>プルダウンで特定店舗・特定週に絞って計画を一括入力できます</div>
+            <div class="manual-row"><span class="manual-key">消去</span>選択範囲の計画入力をまとめて削除します</div>
           </div>
           <div class="manual-section">
             <h3>色の見方</h3>
@@ -368,12 +368,10 @@ function renderCurrent(){
    予算データ取得
 ============================================================ */
 function getBD(store,day,dept){
-  /* アップロード済みデータがあればそれを返す */
   const m=getMonth();
   const up=uploadedBudget[dept]?.[m];
   if(up&&up[store]&&up[store][day]) return up[store][day];
-  /* 未登録事業部・未登録月は null を返す（ダミーデータを使わない） */
-  return null;
+  return null; /* 予算未登録はnull */
 }
 function getVal(dept,s,d){
   const e=actuals[dept]?.[s]?.[d];
@@ -398,10 +396,12 @@ function saveAll(){
     showSaveBadge(true);
   }catch(e){showSaveBadge(false);}
 }
-function savePDCA(dept){
+function savePDCA(dept,wi){
   try{
-    localStorage.setItem(sk(dept,"plan_txt"),  document.getElementById(`txt-plan-${dept}`)?.value||"");
-    localStorage.setItem(sk(dept,"action_txt"),document.getElementById(`txt-action-${dept}`)?.value||"");
+    const pt=document.getElementById(`txt-plan-${dept}-${wi}`)?.value||"";
+    const at=document.getElementById(`txt-action-${dept}-${wi}`)?.value||"";
+    localStorage.setItem(sk(dept,`plan_txt_${wi}`),  pt);
+    localStorage.setItem(sk(dept,`action_txt_${wi}`),at);
     showSaveBadge(true);
   }catch(e){}
 }
@@ -459,16 +459,18 @@ function initActuals(){
   });
 }
 function fillDefaultLY(){
-  /* 保存データがない事業部のみデフォルト昨対100%を入れる */
+  /* 予算アップロード済みの事業部のみ、計画未入力の場合に昨対100%をデフォルト入力 */
+  /* 実績・未登録事業部には何も入れない */
   const m=getMonth(),days=daysInMonth(2026,m);
   DEPTS.forEach(dept=>{
-    const hasData=stores.some(s=>Object.keys(actuals[dept]?.[s]||{}).length>0);
+    if(!uploadedBudget[dept]?.[m]) return; /* 予算未登録はスキップ */
+    const hasData=stores.some(s=>Object.keys(plans[dept]?.[s]||{}).length>0);
     if(!hasData){
       stores.forEach(s=>{
-        if(!actuals[dept][s]) actuals[dept][s]={};
+        if(!plans[dept][s]) plans[dept][s]={};
         for(let d=1;d<=days;d++){
           const ly=getBD(s,d,dept)?.ly;
-          if(ly!=null) actuals[dept][s][d]={val:ly,isLY:true};
+          if(ly!=null) plans[dept][s][d]=ly;
         }
       });
     }
@@ -520,7 +522,7 @@ function ua(dept,s,d,v){
   if(!isNaN(n)&&n>=0) actuals[dept][s][d]={val:n,isLY:false};
   else delete actuals[dept][s][d];
   saveAll();
-  renderDeptKPI(dept);renderDeptStores(dept);
+  renderDeptKPI(dept);renderDeptStores(dept);updateCalcCells(dept);
 }
 function up2(dept,s,d,v){
   const n=parseFloat(v);
@@ -529,14 +531,22 @@ function up2(dept,s,d,v){
   if(!isNaN(n)&&n>=0) plans[dept][s][d]=n;
   else delete plans[dept][s][d];
   saveAll();
-  renderDeptKPI(dept);renderDeptStores(dept);
+  renderDeptKPI(dept);renderDeptStores(dept);updateCalcCells(dept);
+}
+
+function updateCalcCells(dept){
+  renderDeptWeekSummary(dept);
+  renderDeptTable(dept);
 }
 function togOpt(dept,k){
   opts[dept][k]=!opts[dept][k];
   document.getElementById(`tog-${dept}-${k}`).classList.toggle("on",opts[dept][k]);
   renderDeptTable(dept);
 }
-function setWeekTab(dept,w){activeWeek[dept]=w;renderDeptTable(dept);}
+function setWeekTab(dept,w){
+  activeWeek[dept]=w;
+  renderDeptTable(dept);
+}
 
 /* ============================================================
    一括入力
@@ -546,11 +556,10 @@ function bulkFill(dept,mode){
   const wv=document.getElementById(`bulk-week-${dept}`).value;
   const targets=sv==="ALL"?[...stores]:[sv];
   const days=wv==="ALL"?allDays():wdays(+wv);
-  let val,isLYflag=false;
+  let val;
   if(mode==="ly"){
     const r=parseFloat(document.getElementById(`bulk-ratio-${dept}`).value)/100;
     if(isNaN(r)||r<=0){showToast("昨対比に正しい数値を入力");return;}
-    isLYflag=Math.abs(r-1)<0.001;
     val=d=>{ const ly=getBD(d.store,d.day,dept)?.ly; return ly!=null?Math.round(ly*r):null; };
   } else {
     const fv=parseFloat(document.getElementById(`bulk-fixed-${dept}`).value);
@@ -559,25 +568,25 @@ function bulkFill(dept,mode){
   }
   let count=0;
   targets.forEach(s=>{
-    if(!actuals[dept][s]) actuals[dept][s]={};
+    if(!plans[dept][s]) plans[dept][s]={};
     days.forEach(d=>{
       const v=val({store:s,day:d});
-      if(v!=null){actuals[dept][s][d]={val:v,isLY:isLYflag};count++;}
+      if(v!=null){plans[dept][s][d]=v;count++;}
     });
   });
   saveAll();renderDept(dept);
-  showToast(`${count}件を入力しました`);
+  showToast(`計画に${count}件を入力しました`);
 }
 function bulkClear(dept){
-  if(!confirm("選択範囲の実績を削除しますか？")) return;
+  if(!confirm("選択範囲の計画入力をすべて削除しますか？")) return;
   const sv=document.getElementById(`bulk-store-${dept}`).value;
   const wv=document.getElementById(`bulk-week-${dept}`).value;
   const targets=sv==="ALL"?[...stores]:[sv];
   const days=wv==="ALL"?allDays():wdays(+wv);
   let count=0;
-  targets.forEach(s=>days.forEach(d=>{if(actuals[dept]?.[s]?.[d]!=null){delete actuals[dept][s][d];count++;}}));
+  targets.forEach(s=>days.forEach(d=>{if(plans[dept]?.[s]?.[d]!=null){delete plans[dept][s][d];count++;}}));
   saveAll();renderDept(dept);
-  showToast(`${count}件を消去しました`);
+  showToast(`計画を${count}件消去しました`);
 }
 
 /* ============================================================
@@ -786,7 +795,7 @@ function renderDept(dept){
   }
   renderDeptKPI(dept);
   renderDeptStores(dept);
-  renderDeptTabs(dept);
+  renderDeptWeekSummary(dept);
   renderDeptTable(dept);
 }
 
@@ -799,28 +808,33 @@ function buildDeptHTML(dept){
     <span style="font-size:11px;color:#888" id="dept-month-lbl-${dept}"></span>
     <button class="btn btn-green" style="margin-left:auto" onclick="exportCSV('${dept}')">📥 CSVエクスポート</button>
   </div>
+
+  <!-- KPI・ストアカード（月次累積固定） -->
   <div class="kpi-grid" id="kpi-${dept}"></div>
   <div class="store-grid" id="stores-${dept}"></div>
 
+  <!-- 週次小計サマリーテーブル -->
+  <div class="tbl-outer" style="margin-bottom:12px">
+    <div class="tbl-wrap">
+      <table id="week-summary-${dept}"><thead></thead><tbody></tbody></table>
+    </div>
+  </div>
+
   <!-- 一括入力バー -->
   <div class="bulk-bar">
-    <span class="bulk-title">⚡ 一括入力</span>
+    <span class="bulk-title">⚡ 計画　一括入力</span>
     <span style="font-size:11px;color:#888">店舗：</span>
     <select class="sm" id="bulk-store-${dept}">${storeOpts}</select>
     <span style="font-size:11px;color:#888">週：</span>
     <select class="sm" id="bulk-week-${dept}">${weekOpts}</select>
     <div class="vline"></div>
-    <button class="btn btn-sm" style="background:#fdf3ff;color:#6a1b9a;border-color:#ce93d8" onclick="document.getElementById('bulk-ratio-${dept}').value='100';bulkFill('${dept}','ly')">昨対100%で一括入力</button>
+    <button class="btn btn-sm" style="background:#fdf3ff;color:#6a1b9a;border-color:#ce93d8" onclick="document.getElementById('bulk-ratio-${dept}').value='100';bulkFill('${dept}','ly')">昨対100%で計画を一括入力</button>
     <span style="font-size:11px;color:#888">または昨対</span>
     <input type="number" id="bulk-ratio-${dept}" value="100" min="50" max="200" style="width:60px">
-    <span style="font-size:11px;color:#888">%</span>
-    <button class="btn-sm btn-sm" onclick="bulkFill('${dept}','ly')">一括入力</button>
+    <span style="font-size:11px;color:#888">%で</span>
+    <button class="btn-sm" onclick="bulkFill('${dept}','ly')">計画を一括入力</button>
     <div class="vline"></div>
-    <span style="font-size:11px;color:#888">固定値：</span>
-    <input type="number" id="bulk-fixed-${dept}" placeholder="例：500" style="width:70px">
-    <button class="btn-sm" onclick="bulkFill('${dept}','fixed')">一括入力</button>
-    <div class="vline"></div>
-    <button class="btn-sm" style="color:#c62828" onclick="bulkClear('${dept}')">消去</button>
+    <button class="btn-sm" style="color:#c62828" onclick="bulkClear('${dept}')">計画を消去</button>
   </div>
 
   <!-- 表示オプション -->
@@ -832,30 +846,102 @@ function buildDeptHTML(dept){
     <button class="pill"    id="tog-${dept}-diff"     onclick="togOpt('${dept}','diff')">差異額</button>
     <button class="pill"    id="tog-${dept}-weekly"   onclick="togOpt('${dept}','weekly')">週次のみ</button>
   </div>
-  <div class="week-tabs" id="wtabs-${dept}"></div>
-  <div class="tbl-outer"><div class="tbl-wrap">
-    <table><thead id="thead-${dept}"></thead><tbody id="tbody-${dept}"></tbody></table>
-  </div></div>
+  <div id="tbl-weeks-${dept}"></div>`;
+}
 
-  <!-- PDCA -->
-  <div class="card"><div class="card-body">
-    <div class="card-title">✏ PDCA記録</div>
-    <div class="pdca-grid">
-      <div class="pdca-box">
-        <h4><span class="tag tag-p">Plan</span>今週の作戦</h4>
-        <textarea id="txt-plan-${dept}" placeholder="今週の打ち手・数値目標を記入する" oninput="savePDCA('${dept}')"></textarea>
+function renderDeptWeekPDCA(dept){
+  const m=getMonth(),days=daysInMonth(2026,m);
+  const aw=activeWeek[dept];
+  const wis=aw==="all"?WEEKS.map((_,i)=>i).filter(i=>WEEKS[i].s<=days):[aw];
+  const container=document.getElementById(`pdca-weeks-${dept}`);
+  if(!container) return;
+  container.innerHTML=wis.map(wi=>{
+    const w=WEEKS[wi];
+    const pt=localStorage.getItem(sk(dept,`plan_txt_${wi}`))||"";
+    const at=localStorage.getItem(sk(dept,`action_txt_${wi}`))||"";
+    return `
+    <div class="card" style="margin-bottom:10px">
+      <div class="card-body">
+        <div style="font-size:12px;font-weight:500;color:#1e3a5f;margin-bottom:10px">
+          ✏ ${w.label}　PDCA記録
+          <span style="font-size:11px;font-weight:400;color:#888;margin-left:8px">${m}/${w.s}〜${m}/${Math.min(w.e,days)}</span>
+        </div>
+        <div class="pdca-grid">
+          <div class="pdca-box">
+            <h4><span class="tag tag-p">Plan</span>今週の作戦・目標</h4>
+            <textarea id="txt-plan-${dept}-${wi}" rows="4"
+              placeholder="今週の打ち手・数値目標を記入する"
+              oninput="savePDCA('${dept}',${wi})">${pt}</textarea>
+          </div>
+          <div class="pdca-box">
+            <h4><span class="tag tag-a">Action</span>週末振り返り・来週対策</h4>
+            <textarea id="txt-action-${dept}-${wi}" rows="4"
+              placeholder="できたこと・できなかったこと・来週の対策"
+              oninput="savePDCA('${dept}',${wi})">${at}</textarea>
+          </div>
+        </div>
       </div>
-      <div class="pdca-box">
-        <h4><span class="tag tag-a">Action</span>週末振り返り</h4>
-        <textarea id="txt-action-${dept}" placeholder="できたこと・できなかったこと・来週の対策" oninput="savePDCA('${dept}')"></textarea>
-      </div>
-    </div>
-  </div></div>`;
+    </div>`;
+  }).join("");
+}
+
+function renderDeptWeekSummary(dept){
+  const m=getMonth(), days=daysInMonth(2026,m);
+  const tbl=document.getElementById(`week-summary-${dept}`);
+  if(!tbl) return;
+  const validWeeks=WEEKS.filter(w=>w.s<=days);
+
+  /* ヘッダー */
+  let thead=`<tr>
+    <th style="text-align:left;min-width:60px">週</th>
+    <th style="text-align:left;min-width:80px;color:#888">期間</th>`;
+  stores.forEach(s=>thead+=`<th colspan="3" class="sh sep">${s}店</th>`);
+  thead+=`<th colspan="3" class="sh sep" style="background:#1e3a5f">全店計</th></tr>`;
+  thead+=`<tr><th></th><th></th>`;
+  stores.forEach(()=>thead+=`<th class="sep">計画</th><th>実績</th><th>計画比</th>`);
+  thead+=`<th class="sep">計画</th><th>実績</th><th>計画比</th></tr>`;
+  tbl.querySelector("thead").innerHTML=thead;
+
+  /* 各週の小計行 */
+  let tbody="";
+  validWeeks.forEach((w,wi)=>{
+    const wd=wdays(wi);
+    let tp=0,ta2=0,hasTa=false;
+    stores.forEach(s=>{const a=sumA(dept,s,wd);if(a!=null){ta2+=a;hasTa=true;}tp+=sumP(dept,s,wd)||0;});
+    const tr2=hasTa&&tp?ta2/tp:null;
+    tbody+=`<tr class="sub">
+      <td class="lc" style="font-weight:500">${w.label}</td>
+      <td class="lc" style="color:#aaa;font-size:10px">${m}/${w.s}〜${m}/${Math.min(w.e,days)}</td>`;
+    stores.forEach(s=>{
+      const p=sumP(dept,s,wd), a=sumA(dept,s,wd), r=ratioW(dept,s,wd);
+      tbody+=`<td class="sep">${f(p)}</td><td>${f(a)}</td><td class="${rc(r)}">${fr(r)}</td>`;
+    });
+    tbody+=`<td class="sep" style="font-weight:500">${f(tp||null)}</td>
+      <td style="font-weight:500">${f(hasTa?ta2:null)}</td>
+      <td class="${rc(tr2)}" style="font-weight:500">${fr(tr2)}</td></tr>`;
+  });
+
+  /* 月次累積行 */
+  const ad=allDays();
+  let tp2=0,ta3=0,hasTa2=false;
+  stores.forEach(s=>{const a=sumA(dept,s,ad);if(a!=null){ta3+=a;hasTa2=true;}tp2+=sumP(dept,s,ad)||0;});
+  const tr3=hasTa2&&tp2?ta3/tp2:null;
+  tbody+=`<tr class="cumul">
+    <td class="lc" colspan="2">月次累積</td>`;
+  stores.forEach(s=>{
+    const p=sumP(dept,s,ad), a=sumA(dept,s,ad), r=ratioW(dept,s,ad);
+    tbody+=`<td class="sep">${f(p)}</td><td>${f(a)}</td><td class="${rc(r)}">${fr(r)}</td>`;
+  });
+  tbody+=`<td class="sep" style="font-weight:500">${f(tp2||null)}</td>
+    <td style="font-weight:500">${f(hasTa2?ta3:null)}</td>
+    <td class="${rc(tr3)}" style="font-weight:500">${fr(tr3)}</td></tr>`;
+  tbl.querySelector("tbody").innerHTML=tbody;
 }
 
 function renderDeptKPI(dept){
-  const ad=allDays(),m=getMonth();
+  const m=getMonth();
   const hasUpload=!!(uploadedBudget[dept]?.[m]);
+  const ad=allDays();
   let tb=0,ta=0,tl=0,tc=0;
   stores.forEach(s=>{
     tb+=sumB(dept,s,ad);
@@ -867,17 +953,18 @@ function renderDeptKPI(dept){
   if(!el) return;
   const noUploadBadge=hasUpload?"":`<span style="font-size:10px;background:#fff8e1;color:#e65100;padding:2px 8px;border-radius:10px;border:0.5px solid #ffe082;margin-left:6px">予算未登録</span>`;
   el.innerHTML=`
-    <div class="kpi"><div class="kpi-label">月次予算（${stores.length}店舗計）${noUploadBadge}</div>
-      <div class="kpi-val" style="${!hasUpload?'color:#aaa':''}">
-        ${hasUpload?f(tb):'—'}</div>
-      <div class="kpi-sub">2026年${m}月　${hasUpload?'':'予算Excelをアップロードしてください'}</div></div>
-    <div class="kpi"><div class="kpi-label">累積実績</div>
-      <div class="kpi-val ${rc(r)}">${f(tc?ta:null)}</div><div class="kpi-sub">${tc?"入力済み":"未入力"}</div></div>
-    <div class="kpi"><div class="kpi-label">累積 計画比</div>
+    <div class="kpi"><div class="kpi-label">予算（${stores.length}店舗計）${noUploadBadge}</div>
+      <div class="kpi-val" style="${!hasUpload?'color:#aaa':''}">${hasUpload?f(tb):'—'}</div>
+      <div class="kpi-sub">月次累積</div></div>
+    <div class="kpi"><div class="kpi-label">実績</div>
+      <div class="kpi-val ${rc(r)}">${f(tc?ta:null)}</div>
+      <div class="kpi-sub">月次累積</div></div>
+    <div class="kpi"><div class="kpi-label">計画比</div>
       <div class="kpi-val ${rc(r)}">${hasUpload?fr(r):'—'}</div>
       <div class="kpi-sub">${r!=null&&hasUpload?`<span class="badge badge-${rc(r)}">${r>=1?"達成":"未達"}</span>`:""}</div></div>
     <div class="kpi"><div class="kpi-label">昨年比</div>
-      <div class="kpi-val ${rc(lr)}">${hasUpload?fr(lr):'—'}</div><div class="kpi-sub">対昨年実績</div></div>`;
+      <div class="kpi-val ${rc(lr)}">${hasUpload?fr(lr):'—'}</div>
+      <div class="kpi-sub">対昨年実績</div></div>`;
   const lbl=document.getElementById(`dept-month-lbl-${dept}`);
   if(lbl) lbl.textContent=`2026年${m}月`;
 }
@@ -890,7 +977,8 @@ function renderDeptStores(dept){
     const b=sumB(dept,s,ad),a=sumA(dept,s,ad),r=a!=null&&b?a/b:null;
     const pct=r!=null?Math.min(r*100,110):0;
     const bc=r==null?"#c0c0be":r>=1?"#2e7d32":r>=0.95?"#e65100":"#c62828";
-    return `<div class="store-card"><div class="store-name">${s}店</div>
+    return `<div class="store-card">
+      <div class="store-name">${s}店</div>
       <div class="store-ratio ${rc(r)}">${fr(r)}</div>
       <div class="store-nums">${f(a)} / ${f(b)}</div>
       <div class="bar-wrap"><div class="bar-fill" style="width:${pct.toFixed(0)}%;background:${bc}"></div></div>
@@ -918,7 +1006,7 @@ function renderDeptTable(dept){
   if(daily&&!weekly)span++;if(plan&&!weekly)span++;
   if(lastyear)span++;if(diff)span++;
 
-  /* thead */
+  /* thead（全週共通） */
   let thead=`<tr><th style="min-width:28px">週</th><th class="lc" style="min-width:38px">日付</th><th style="min-width:20px">曜</th>`;
   stores.forEach(s=>thead+=`<th colspan="${span}" class="sh sep">${s}店</th>`);
   thead+=`</tr><tr><th></th><th></th><th></th>`;
@@ -932,10 +1020,15 @@ function renderDeptTable(dept){
   });
   thead+=`</tr>`;
 
-  /* tbody */
-  let tbody="";
+  /* 週ごとにテーブル＋PDCA欄を生成 */
+  const outer=document.getElementById(`tbl-weeks-${dept}`);
+  if(!outer) return;
+  let html="";
+
   wis.forEach(wi=>{
     const wd=wdays(wi);
+    let tbody="";
+
     if(!weekly){
       wd.forEach((d,di)=>{
         const dow=new Date(2026,m-1,d).getDay();
@@ -947,9 +1040,9 @@ function renderDeptTable(dept){
           const p=plans[dept]?.[s]?.[d],a=getVal(dept,s,d),auto=isLY(dept,s,d);
           const r=ratio(dept,s,d),lyr=a!=null&&ly?a/ly:null,dv=a!=null?a-(p!=null?p:b):null;
           if(daily) tbody+=`<td class="${si===0?'sep':''}" style="color:#aaa">${f(b)}</td>`;
-          if(plan)  tbody+=`<td class="${!daily&&si===0?'sep':''}"><input class="pi" type="number" value="${p!=null?p:''}" placeholder="—" onchange="up2('${dept}','${s}',${d},this.value)"></td>`;
+          if(plan)  tbody+=`<td class="${!daily&&si===0?'sep':''}"><input class="pi" type="number" value="${p!=null?p:''}" placeholder="—" onchange="up2('${dept}','${s}',${d},this.value)" onkeydown="if(event.key==='Enter'){up2('${dept}','${s}',${d},this.value);this.blur()}"></td>`;
           if(!daily&&!plan) tbody+=`<td class="${si===0?'sep':''}"></td>`;
-          tbody+=`<td><input class="ai${auto?' ly':''}" type="number" value="${a!=null?a:''}" placeholder="—" onchange="ua('${dept}','${s}',${d},this.value)" title="${auto?'昨対100%自動入力（上書き可）':''}"></td>`;
+          tbody+=`<td><input class="ai${auto?' ly':''}" type="number" value="${a!=null?a:''}" placeholder="—" onchange="ua('${dept}','${s}',${d},this.value)" onkeydown="if(event.key==='Enter'){ua('${dept}','${s}',${d},this.value);this.blur()}" title="${auto?'昨対100%自動入力（上書き可）':''}"></td>`;
           tbody+=`<td class="${rc(r)}">${fr(r)}</td>`;
           if(lastyear) tbody+=`<td class="${rc(lyr)}">${fr(lyr)}</td>`;
           if(diff)     tbody+=`<td class="${dc(dv)}">${fd(dv)}</td>`;
@@ -957,7 +1050,8 @@ function renderDeptTable(dept){
         tbody+=`</tr>`;
       });
     }
-    /* 週次小計 */
+
+    /* 小計行 */
     tbody+=`<tr class="sub"><td></td><td class="lc" colspan="2">${WEEKS[wi].label}　小計</td>`;
     stores.forEach(s=>{
       const b=sumB(dept,s,wd),a=sumA(dept,s,wd),ly=sumL(dept,s,wd),p=sumP(dept,s,wd);
@@ -970,37 +1064,64 @@ function renderDeptTable(dept){
       if(diff)     tbody+=`<td class="${dc(dv)}">${fd(dv)}</td>`;
     });
     tbody+=`</tr>`;
+
+    /* このテーブルブロック */
+    html+=`<div class="tbl-outer" style="margin-bottom:0;border-radius:10px 10px 0 0">
+      <div class="tbl-wrap">
+        <table id="tbl-wi-${dept}-${wi}">
+          <thead>${thead}</thead>
+          <tbody>${tbody}</tbody>
+        </table>
+      </div>
+    </div>`;
+
+    /* 小計直下のPDCA欄 */
+    const pt=localStorage.getItem(sk(dept,`plan_txt_${wi}`))||"";
+    const at=localStorage.getItem(sk(dept,`action_txt_${wi}`))||"";
+    html+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:0;border:0.5px solid #e0e0de;border-top:none;border-radius:0 0 10px 10px;background:#fff;margin-bottom:14px">
+      <div style="padding:10px 14px;border-right:0.5px solid #e0e0de">
+        <div style="font-size:11px;font-weight:500;margin-bottom:6px;display:flex;align-items:center;gap:5px">
+          <span class="tag tag-p">Plan</span>${WEEKS[wi].label}　作戦・目標
+        </div>
+        <textarea id="txt-plan-${dept}-${wi}" rows="3"
+          style="width:100%;font-size:12px;border:0.5px solid #e0e0de;border-radius:5px;padding:6px 8px;resize:vertical;font-family:inherit;line-height:1.6;background:#fafafa;color:#1a1a1a"
+          placeholder="今週の打ち手・数値目標を記入する"
+          oninput="savePDCA('${dept}',${wi})">${pt}</textarea>
+      </div>
+      <div style="padding:10px 14px">
+        <div style="font-size:11px;font-weight:500;margin-bottom:6px;display:flex;align-items:center;gap:5px">
+          <span class="tag tag-a">Action</span>${WEEKS[wi].label}　振り返り・来週対策
+        </div>
+        <textarea id="txt-action-${dept}-${wi}" rows="3"
+          style="width:100%;font-size:12px;border:0.5px solid #e0e0de;border-radius:5px;padding:6px 8px;resize:vertical;font-family:inherit;line-height:1.6;background:#fafafa;color:#1a1a1a"
+          placeholder="できたこと・できなかったこと・来週の対策"
+          oninput="savePDCA('${dept}',${wi})">${at}</textarea>
+      </div>
+    </div>`;
   });
+
   /* 月次累積 */
   if(aw==="all"){
     const ad=allDays();
-    tbody+=`<tr class="cumul"><td></td><td class="lc" colspan="2">月次累積</td>`;
+    let cumul=`<tr class="cumul"><td></td><td class="lc" colspan="2">月次累積</td>`;
     stores.forEach(s=>{
       const b=sumB(dept,s,ad),a=sumA(dept,s,ad),ly=sumL(dept,s,ad),p=sumP(dept,s,ad);
       const r=ratioW(dept,s,ad),lyr=a!=null&&ly?a/ly:null,dv=a!=null?a-(p!=null?p:b):null;
-      if(daily&&!weekly) tbody+=`<td>${f(b)}</td>`;
-      if(plan&&!weekly)  tbody+=`<td>${f(p)}</td>`;
-      if(!daily&&!plan)  tbody+=`<td></td>`;
-      tbody+=`<td>${f(a)}</td><td>${fr(r)}</td>`;
-      if(lastyear) tbody+=`<td>${fr(lyr)}</td>`;
-      if(diff)     tbody+=`<td class="${dc(dv)}">${fd(dv)}</td>`;
+      if(daily&&!weekly) cumul+=`<td>${f(b)}</td>`;
+      if(plan&&!weekly)  cumul+=`<td>${f(p)}</td>`;
+      if(!daily&&!plan)  cumul+=`<td></td>`;
+      cumul+=`<td>${f(a)}</td><td>${fr(r)}</td>`;
+      if(lastyear) cumul+=`<td>${fr(lyr)}</td>`;
+      if(diff)     cumul+=`<td class="${dc(dv)}">${fd(dv)}</td>`;
     });
-    tbody+=`</tr>`;
+    cumul+=`</tr>`;
+    html+=`<div class="tbl-outer"><div class="tbl-wrap">
+      <table><thead>${thead}</thead><tbody>${cumul}</tbody></table>
+    </div></div>`;
   }
 
-  const th=document.getElementById(`thead-${dept}`);
-  const tb2=document.getElementById(`tbody-${dept}`);
-  if(th) th.innerHTML=thead;
-  if(tb2) tb2.innerHTML=tbody;
-
-  /* PDCA テキスト復元 */
-  const tp=document.getElementById(`txt-plan-${dept}`);
-  const ta=document.getElementById(`txt-action-${dept}`);
-  if(tp&&!tp.dataset.loaded){
-    tp.value=localStorage.getItem(sk(dept,"plan_txt"))||"";
-    ta.value=localStorage.getItem(sk(dept,"action_txt"))||"";
-    tp.dataset.loaded="1";
-  }
+  outer.innerHTML=html;
+  /* PDCA復元はrenderDeptWeekPDCAで行うため不要 */
 }
 
 /* ============================================================
@@ -1011,6 +1132,27 @@ document.getElementById("today-lbl").textContent=`${now.getMonth()+1}/${now.getD
 updateUISelects();
 initActuals();
 loadAll();
+
+/* 予算未登録の事業部の実績・計画データをクリア（古いデータが残っている場合の対策） */
+(function cleanUnregisteredData(){
+  const m=getMonth();
+  let cleaned=false;
+  DEPTS.forEach(dept=>{
+    const hasUpload=!!(uploadedBudget[dept]?.[m]);
+    if(!hasUpload){
+      stores.forEach(s=>{
+        if(actuals[dept]?.[s]&&Object.keys(actuals[dept][s]).length>0){
+          actuals[dept][s]={};cleaned=true;
+        }
+        if(plans[dept]?.[s]&&Object.keys(plans[dept][s]).length>0){
+          plans[dept][s]={};cleaned=true;
+        }
+      });
+    }
+  });
+  if(cleaned) saveAll();
+})();
+
 fillDefaultLY();
 saveAll();
 renderSummary();
