@@ -544,6 +544,24 @@ input.pi:focus{outline:none;border-color:#9c27b0;background:#fff}
       </div>
     </div>
 
+    <!-- 実績CSVアップロード -->
+    <div class="card" style="grid-column:1/-1">
+      <div class="card-body">
+        <div class="card-title">📊 実績　CSVアップロード</div>
+        <p style="font-size:11px;color:#888;margin-bottom:12px">実績CSVをアップロードしてください。列：日付・店舗名・ディビジョン名・売上税抜金額。アップロードした数値で既存の実績を上書きします（千円単位に自動変換）。</p>
+        <div class="upload-zone" id="actual-upload-zone"
+          ondragover="event.preventDefault();this.classList.add('drag')"
+          ondragleave="this.classList.remove('drag')"
+          ondrop="handleActualDrop(event)"
+          onclick="document.getElementById('actual-file-input').click()">
+          <p>クリックまたはドラッグ&ドロップ</p>
+          <small>.csv に対応（shift_jis / UTF-8）</small>
+        </div>
+        <input type="file" id="actual-file-input" accept=".csv" style="display:none" onchange="handleActualFile(this.files[0])">
+        <p style="font-size:11px;color:#888;margin-top:8px">現在の読み込み状況：<span id="actual-upload-status" style="color:#888">未アップロード</span></p>
+      </div>
+    </div>
+
     <!-- エクスポート -->
     <div class="card">
       <div class="card-body">
@@ -957,6 +975,80 @@ function parseMultiSheetRows(wb, fname){
 
 /* 1シート or HTMLからの自動判定読み込み */
 /* silent=true のときはtoast/status更新をしない（multiSheet時の内部呼び出し用） */
+/* ============================================================
+   実績CSVアップロード処理
+============================================================ */
+function handleActualDrop(e){
+  e.preventDefault();document.getElementById("actual-upload-zone").classList.remove("drag");
+  const f=e.dataTransfer.files[0];if(f) handleActualFile(f);
+}
+function handleActualFile(file){
+  if(!file) return;
+  /* まずUTF-8で試し、失敗したらshift_jisで再試行 */
+  const tryParse = (text) => parseActualCSV(text, file.name);
+  const reader=new FileReader();
+  reader.onload=e=>{
+    const text=e.target.result;
+    if(!tryParse(text)){
+      const r2=new FileReader();
+      r2.onload=e2=>parseActualCSV(e2.target.result, file.name);
+      r2.readAsText(file,"shift_jis");
+    }
+  };
+  reader.readAsText(file,"utf-8");
+}
+
+function parseActualCSV(text, fname){
+  const lines=text.split(/\r?\n/).filter(l=>l.trim());
+  if(lines.length<2) return false;
+  /* ヘッダー行を探す */
+  const header=lines[0].split(",").map(h=>h.trim().replace(/"/g,""));
+  const dateIdx=header.findIndex(h=>h==="日付");
+  const storeIdx=header.findIndex(h=>h==="店舗名");
+  const divIdx=header.findIndex(h=>["ディビジョン名","ライン名","BU名","BU"].includes(h));
+  const amtIdx=header.findIndex(h=>h.includes("売上"));
+  if(dateIdx<0||storeIdx<0||divIdx<0||amtIdx<0){
+    showToast("列が見つかりません（日付・店舗名・ディビジョン名・売上金額が必要です）");
+    return false;
+  }
+
+  let count=0, skipCount=0;
+  lines.slice(1).forEach(line=>{
+    const cols=line.split(",").map(c=>c.trim().replace(/"/g,""));
+    const dateStr=cols[dateIdx]||"";
+    const store=cols[storeIdx]||"";
+    const bu=cols[divIdx]||"";
+    const amt=parseFloat((cols[amtIdx]||"").replace(/,/g,""));
+
+    if(!dateStr||!store||!bu||isNaN(amt)) return;
+    /* BUが18BUに含まれない → スキップ */
+    if(!DEPTS.includes(bu)){ skipCount++; return; }
+    /* 日付解析 */
+    const dm=dateStr.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+    if(!dm) return;
+    const day=parseInt(dm[3]);
+    /* 円→千円変換、手入力フラグfalse */
+    if(!actuals[bu]) actuals[bu]={};
+    if(!actuals[bu][store]) actuals[bu][store]={};
+    actuals[bu][store][day]={val:Math.round(amt/1000), isLY:false};
+    count++;
+  });
+
+  if(count===0){
+    showToast("実績データを読み込めませんでした。フォーマットを確認してください");
+    return false;
+  }
+
+  saveAll();
+  const lbl=document.getElementById("actual-upload-status");
+  if(lbl) lbl.textContent=`✓ ${fname}（${count}件を読み込み、${skipCount}件スキップ）`;
+  lbl && (lbl.style.color="#2e7d32");
+  showToast(`実績データを${count}件読み込みました`);
+  /* 現在開いているBUページがあれば再描画 */
+  if(currentPage.startsWith("dept-")) renderDept(currentPage.replace("dept-",""));
+  return true;
+}
+
 function parseRowsAuto(rows, fname, storeHint, silent){
   let hi=-1, dateColIdx=-1, itemColIdx=-1;
   for(let i=0;i<Math.min(rows.length,10);i++){
@@ -2181,20 +2273,32 @@ function renderSummary(){
   renderHomeCheckpoints();
 
   /* KPI（全BU・全店舗合算） */
-  let tb=0,ta=0,tl=0,tc=0;
+  let tb=0,ta=0,tl=0,tp=0,tc=0;
   DEPTS.forEach(dept=>{
     stores.forEach(s=>{
       tb+=sumB(dept,s,ad);
       const a=sumA(dept,s,ad);if(a!=null){ta+=a;tc++;}
       tl+=sumL(dept,s,ad);
+      tp+=sumP(dept,s,ad)||0;
     });
   });
-  const r=tc&&tb?ta/tb:null,lr=tc&&tl?ta/tl:null;
+  const planBase = tp>0 ? tp : tb; /* 計画未入力なら予算を基準 */
+  const r=tc&&tb?ta/tb:null;       /* 予算比 */
+  const rp=tc&&planBase?ta/planBase:null; /* 計画比 */
+  const lr=tc&&tl?ta/tl:null;      /* 昨対比 */
+  const budgetDiff = tc ? ta-tb : null;
+  const planDiff   = tc ? ta-planBase : null;
+  const lyDiff     = tc ? ta-tl : null;
+
   document.getElementById("sum-kpi").innerHTML=`
     <div class="kpi"><div class="kpi-label">予算（全BU合算・進捗分）</div><div class="kpi-val">${f(tb)}</div><div class="kpi-sub">${DEPTS.length}BU ${stores.length}店舗</div></div>
     <div class="kpi"><div class="kpi-label">累積実績</div><div class="kpi-val ${rc(r)}">${f(tc?ta:null)}</div><div class="kpi-sub">${progressLabel}</div></div>
-    <div class="kpi"><div class="kpi-label">累積 計画比</div><div class="kpi-val ${rc(r)}">${fr(r)}</div><div class="kpi-sub">${r!=null?`<span class="badge badge-${rc(r)}">${r>=1?"達成":"未達"}</span>`:""}</div></div>
-    <div class="kpi"><div class="kpi-label">昨年比</div><div class="kpi-val ${rc(lr)}">${fr(lr)}</div><div class="kpi-sub">対昨年実績</div></div>`;
+    <div class="kpi"><div class="kpi-label">予算比</div><div class="kpi-val ${rc(r)}">${fr(r)}</div>
+      <div class="kpi-sub">${budgetDiff!=null?`差額 <span class="${dc(budgetDiff)}">${fd(budgetDiff)}</span>`:""}</div></div>
+    <div class="kpi"><div class="kpi-label">計画比</div><div class="kpi-val ${rc(rp)}">${fr(rp)}</div>
+      <div class="kpi-sub">${planDiff!=null?`差額 <span class="${dc(planDiff)}">${fd(planDiff)}</span>`:""}</div></div>
+    <div class="kpi"><div class="kpi-label">昨対比</div><div class="kpi-val ${rc(lr)}">${fr(lr)}</div>
+      <div class="kpi-sub">${lyDiff!=null?`差額 <span class="${dc(lyDiff)}">${fd(lyDiff)}</span>`:""}</div></div>`;
 
   /* BUカード */
   document.getElementById("sum-dept-cards").innerHTML=DEPTS.map(dept=>{
