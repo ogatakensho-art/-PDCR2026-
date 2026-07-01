@@ -1388,19 +1388,14 @@ function renderHomeTrendCheckpoints(){
 
   const m=getMonth(), days=daysInMonth(2026,m);
   const validWeeks=WEEKS.filter(w=>w.s<=days);
-  const weekHasInput = validWeeks.map((w,wi)=>{
-    const wd=wdays(wi);
-    return wd.some(d => DEPTS.some(dept => stores.some(s => getVal(dept,s,d)!=null)));
-  });
-  let curWeekIdx=-1;
-  for(let i=weekHasInput.length-1;i>=0;i--){ if(weekHasInput[i]){ curWeekIdx=i; break; } }
+  const sel=selectCurPrevWeeks(validWeeks, null);
 
-  if(curWeekIdx<1){
+  if(!sel){
     elGood.innerHTML=`<div class="pickup-empty">2週分以上の実績データが必要です</div>`;
     elBad.innerHTML=`<div class="pickup-empty">2週分以上の実績データが必要です</div>`;
     return;
   }
-  const prevWeekIdx=curWeekIdx-1;
+  const {curWeekIdx, prevWeekIdx}=sel;
   const curDays=wdays(curWeekIdx), prevDays=wdays(prevWeekIdx);
 
   function getBase(dept,ds,metricKey){
@@ -2151,21 +2146,49 @@ function setMomentumModeDown(mode){
 
 const MOMENTUM_METRIC_LABEL = {plan:"計画比", budget:"予算比", ly:"昨対比"};
 
+/* 先週・今週のインデックスを選ぶ共通関数
+   「実績が3日以上ある週」を「完了週」とみなし、
+   完了週が2つ以上ある場合は直近2つを今週・先週とする。
+   完了週が1つしかない場合は実績が1日以上ある週まで対象を広げる。 */
+function selectCurPrevWeeks(validWeeks, deptFilter){
+  const MIN_DAYS = 3;
+  /* 各週の実績入力日数を計算 */
+  const weekInputCount = validWeeks.map((w,wi)=>{
+    const wd=wdays(wi);
+    const depts = deptFilter ? [deptFilter] : DEPTS;
+    return wd.filter(d => depts.some(dept => stores.some(s => getVal(dept,s,d)!=null))).length;
+  });
+
+  /* まず「3日以上」の週を完了週とする */
+  let completeWeeks = validWeeks.map((_,wi)=>wi).filter(wi=>weekInputCount[wi]>=MIN_DAYS);
+
+  /* 2つ以上あれば直近2つ */
+  if(completeWeeks.length>=2){
+    const cur=completeWeeks[completeWeeks.length-1];
+    const prev=completeWeeks[completeWeeks.length-2];
+    return {curWeekIdx:cur, prevWeekIdx:prev};
+  }
+
+  /* 不足の場合は「1日以上」に緩和 */
+  let anyWeeks = validWeeks.map((_,wi)=>wi).filter(wi=>weekInputCount[wi]>=1);
+  if(anyWeeks.length>=2){
+    const cur=anyWeeks[anyWeeks.length-1];
+    const prev=anyWeeks[anyWeeks.length-2];
+    return {curWeekIdx:cur, prevWeekIdx:prev};
+  }
+  return null;
+}
+
 /* 先週・今週の比較行データを計算する共通関数。metricに応じた基準値で比率・差を算出する。
-   戻り値: {curWeekIdx, prevWeekIdx, rows} または rows が空の場合は null */
+   戻り値: {curWeekIdx, prevWeekIdx, rows} または null */
 function computeMomentumRows(metric){
   const m=getMonth(),days=daysInMonth(2026,m);
   const validWeeks=WEEKS.filter(w=>w.s<=days);
 
-  const weekHasInput = validWeeks.map((w,wi)=>{
-    const wd=wdays(wi);
-    return wd.some(d => DEPTS.some(dept => stores.some(s => getVal(dept,s,d)!=null)));
-  });
-  let curWeekIdx=-1;
-  for(let i=weekHasInput.length-1;i>=0;i--){ if(weekHasInput[i]){ curWeekIdx=i; break; } }
-  if(curWeekIdx<1) return null;
+  const sel=selectCurPrevWeeks(validWeeks, null);
+  if(!sel) return null;
+  const {curWeekIdx, prevWeekIdx}=sel;
 
-  const prevWeekIdx=curWeekIdx-1;
   const curDays=wdays(curWeekIdx);
   const prevDays=wdays(prevWeekIdx);
 
@@ -2407,18 +2430,13 @@ function renderDeptPickup(dept){
   /* ---- ② 先週との差視点：先週→今週で計画比が悪化している店舗 ---- */
   const m=getMonth(), days=daysInMonth(2026,m);
   const validWeeks=WEEKS.filter(w=>w.s<=days);
-  const weekHasInput = validWeeks.map((w,wi)=>{
-    const wd=wdays(wi);
-    return wd.some(d => stores.some(s => getVal(dept,s,d)!=null));
-  });
-  let curWeekIdx=-1;
-  for(let i=weekHasInput.length-1;i>=0;i--){ if(weekHasInput[i]){ curWeekIdx=i; break; } }
+  const sel=selectCurPrevWeeks(validWeeks, dept);
 
-  if(curWeekIdx<1){
+  if(!sel){
     elTrend.innerHTML=`<div class="pickup-empty">2週分以上の実績データが必要です</div>`;
     return;
   }
-  const prevWeekIdx=curWeekIdx-1;
+  const {curWeekIdx, prevWeekIdx}=sel;
   const curDays=wdays(curWeekIdx);
   const prevDays=wdays(prevWeekIdx);
 
