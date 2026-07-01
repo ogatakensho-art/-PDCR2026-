@@ -13,6 +13,9 @@ body{font-family:"Meiryo UI","Yu Gothic UI",sans-serif;font-size:13px;color:#1a1
 .nav-tab{font-size:10.5px;padding:7px 10px;border-radius:6px 6px 0 0;color:#9bb5d0;cursor:pointer;user-select:none;white-space:nowrap;border:none;background:transparent;transition:background .1s,color .1s}
 .nav-tab:hover{background:#2d5a8e;color:#fff}
 .nav-tab.active{background:#f0f0ee;color:#1e3a5f;font-weight:500}
+.nav-tabs-wrap{display:flex;gap:2px;flex-wrap:wrap}
+.nav-tab.dragging{opacity:.35}
+.nav-tab.drag-over{box-shadow:inset 0 -3px 0 #fff}
 .nav-sep{width:1px;height:20px;background:#2d5a8e;align-self:center;flex-shrink:0}
 .nav-right{margin-left:auto;display:flex;align-items:center;gap:8px;padding:6px 0}
 .nav-meta{font-size:11px;color:#7a9bbf}
@@ -291,6 +294,43 @@ input.pi:focus{outline:none;border-color:#9c27b0;background:#fff}
 .scc-level-btn.tier-bad.active{border-color:#d03b3b;background:#fdecec}
 .scc-level-btn.tier-bad.active .scc-level-score{color:#d03b3b}
 .scc-level-btn.tier-bad.active .scc-level-label{color:#a92c2c}
+
+/* ========== スマホ対応（詳細チェック入力を中心に） ========== */
+@media (max-width: 640px){
+  body{ padding: 0; }
+  .container{ padding: 8px; }
+  .nav{ padding: 6px 8px; }
+  .nav-tab{ font-size: 11px; padding: 8px 10px; }
+
+  /* 店舗・BU・週・担当者名セレクタを2列に */
+  #scc-detail-selectors{ grid-template-columns: repeat(2,1fr) !important; gap: 8px !important; }
+
+  /* チェック項目テーブル → カード型リストに変換 */
+  .scc-detail-table thead{ display:none; }
+  .scc-detail-table, .scc-detail-table tbody, .scc-detail-table tr, .scc-detail-table td{
+    display:block; width:100%; box-sizing:border-box;
+  }
+  .scc-detail-table tr{
+    border:0.5px solid #e5e5e3; border-radius:10px; padding:12px; margin-bottom:10px; background:#fff;
+  }
+  .scc-detail-table td{ padding:0; border-bottom:none; }
+  .scc-detail-table td:nth-child(1){
+    display:inline-block; font-size:10px; color:#888; background:#f0f0ee; border-radius:4px; padding:2px 8px; margin-bottom:6px;
+  }
+  .scc-detail-table td:nth-child(2){ font-size:13px; font-weight:500; color:#1a1a1a; margin-bottom:10px; }
+  .scc-detail-table td:nth-child(3){ margin-bottom:8px; }
+  .scc-detail-table td:nth-child(4):not(:empty)::before{ content:"問題点"; display:block; font-size:10px; color:#999; margin:8px 0 3px; }
+  .scc-detail-table td:nth-child(5):not(:empty)::before{ content:"改善策・対応策"; display:block; font-size:10px; color:#999; margin:8px 0 3px; }
+
+  /* 評価ボタンをタップしやすいサイズに */
+  .scc-level-btn{ padding:11px 12px; }
+  .scc-level-score{ font-size:14px; min-width:22px; }
+  .scc-level-label{ font-size:12.5px; }
+
+  /* 週別スコア・比較・週次進捗の表は横スクロール可能にする */
+  #page-scc .scc-table{ min-width: 560px; }
+  #page-scc .card-body:has(.scc-table){ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+}
 </style>
 </head>
 <body>
@@ -298,13 +338,7 @@ input.pi:focus{outline:none;border-color:#9c27b0;background:#fff}
 
 <!-- ====== ナビゲーション ====== -->
 <div class="nav" id="main-nav">
-  <button class="nav-tab active" onclick="switchPage('home')">🏠 ホーム</button>
-  <button class="nav-tab" onclick="switchPage('summary')">📊 サマリー</button>
-  <button class="nav-tab" onclick="switchPage('ranking')">🏆 ランキング</button>
-  <button class="nav-tab" onclick="switchPage('blocks')">🧱 差額金額</button>
-  <button class="nav-tab" onclick="switchPage('scc')">🏪 SCC</button>
-  <button class="nav-tab" onclick="switchPage('tools')">⚙ 設定</button>
-  <button class="nav-tab" onclick="switchPage('changelog')">📝 修正履歴</button>
+  <div class="nav-tabs-wrap" id="nav-tabs-wrap"></div>
   <div class="nav-right">
     <select id="sel-month" class="sm" onchange="onMonthChange()" style="background:transparent;color:#9bb5d0;border-color:#2d5a8e">
       <option value="6">2026年6月</option>
@@ -578,8 +612,9 @@ input.pi:focus{outline:none;border-color:#9c27b0;background:#fff}
   <div class="flex-row" style="gap:6px">
     <button class="btn-sm" id="scc-mode-input" onclick="sccSetMode('input')">📝 入力（BU別）</button>
     <button class="btn-sm" id="scc-mode-detail" onclick="sccSetMode('detail')">🔍 詳細チェック入力</button>
-    <button class="btn-sm" id="scc-mode-compare" onclick="sccSetMode('compare')">📊 比較（全BU横断）</button>
+    <button class="btn-sm" id="scc-mode-compare" onclick="sccSetMode('compare')">📊 店×BUスコア</button>
     <button class="btn-sm" id="scc-mode-weekly" onclick="sccSetMode('weekly')">📅 週次進捗（全BU）</button>
+    <button class="btn-sm" id="scc-mode-storeweekly" onclick="sccSetMode('storeweekly')">📅 週次進捗（店舗別）</button>
   </div>
 
   <!-- 入力ビュー（BU別） -->
@@ -678,11 +713,42 @@ input.pi:focus{outline:none;border-color:#9c27b0;background:#fff}
     </div>
   </div>
 
+  <!-- 週次進捗ビュー（店舗別・全BU横断） -->
+  <div id="scc-view-storeweekly" style="display:none">
+    <div class="card">
+      <div class="card-body">
+        <div class="flex-row" style="justify-content:space-between;margin-bottom:12px">
+          <span class="card-title" style="margin-bottom:0">📅 店舗 × 週 平均スコア（全BU横断）</span>
+          <div class="scc-legend">
+            <span><span class="scc-legend-dot" style="background:#2a78d6"></span>90点以上</span>
+            <span><span class="scc-legend-dot" style="background:#0ca30c"></span>80点以上</span>
+            <span><span class="scc-legend-dot" style="background:#fab219"></span>50点以上</span>
+            <span><span class="scc-legend-dot" style="background:#d03b3b"></span>49点以下</span>
+            <span><span class="scc-legend-dot" style="background:#f5f5f3;border:0.5px solid #ccc"></span>未実施</span>
+          </div>
+        </div>
+        <table class="scc-table">
+          <thead>
+            <tr>
+              <th class="store-col">店舗</th>
+              <th>1週目</th><th>2週目</th><th>3週目</th><th>4週目</th><th>5週目</th>
+              <th>月間平均</th>
+              <th style="width:14%">絶好調BU</th>
+              <th style="width:14%">要注意BU</th>
+            </tr>
+          </thead>
+          <tbody id="scc-storeweekly-tbody"></tbody>
+        <tfoot id="scc-storeweekly-tfoot"></tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <!-- 詳細チェック入力ビュー（店舗×BU×週） -->
   <div id="scc-view-detail" style="display:none">
     <div class="card">
       <div class="card-body">
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
+        <div id="scc-detail-selectors" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
           <div class="scc-detail-field">
             <label>店舗</label>
             <select id="scc-detail-store" class="sm" style="width:100%" onchange="sccDetailChangeSelector()"></select>
@@ -736,6 +802,15 @@ input.pi:focus{outline:none;border-color:#9c27b0;background:#fff}
 <!-- ====== 設定ページ ====== -->
 <div class="page" id="page-tools">
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px" class="tools-grid">
+
+    <!-- タブの並び順 -->
+    <div class="card" style="grid-column:1/-1">
+      <div class="card-body">
+        <div class="card-title">📑 タブの並び順</div>
+        <p style="font-size:11px;color:#888;margin-bottom:10px">画面上部のタブはドラッグ&ドロップで自由に並び替えられます（並び順はブラウザに自動保存されます）。</p>
+        <button class="btn btn-sm" onclick="resetNavOrder()">並び順を初期状態に戻す</button>
+      </div>
+    </div>
 
     <!-- 日割予算アップロード -->
     <div class="card" style="grid-column:1/-1">
@@ -1186,12 +1261,14 @@ function renderSCC(){
   const detailBtn = document.getElementById("scc-mode-detail");
   const compareBtn = document.getElementById("scc-mode-compare");
   const weeklyBtn = document.getElementById("scc-mode-weekly");
+  const storeWeeklyBtn = document.getElementById("scc-mode-storeweekly");
   const inputView = document.getElementById("scc-view-input");
   const detailView = document.getElementById("scc-view-detail");
   const compareView = document.getElementById("scc-view-compare");
   const weeklyView = document.getElementById("scc-view-weekly");
-  inputBtn.className = "btn-sm"; detailBtn.className = "btn-sm"; compareBtn.className = "btn-sm"; weeklyBtn.className = "btn-sm";
-  inputView.style.display = "none"; detailView.style.display = "none"; compareView.style.display = "none"; weeklyView.style.display = "none";
+  const storeWeeklyView = document.getElementById("scc-view-storeweekly");
+  inputBtn.className = "btn-sm"; detailBtn.className = "btn-sm"; compareBtn.className = "btn-sm"; weeklyBtn.className = "btn-sm"; storeWeeklyBtn.className = "btn-sm";
+  inputView.style.display = "none"; detailView.style.display = "none"; compareView.style.display = "none"; weeklyView.style.display = "none"; storeWeeklyView.style.display = "none";
 
   if(sccViewMode==="compare"){
     compareBtn.className = "btn-sm btn-blue";
@@ -1201,6 +1278,10 @@ function renderSCC(){
     weeklyBtn.className = "btn-sm btn-blue";
     weeklyView.style.display = "block";
     renderSCCWeekly();
+  } else if(sccViewMode==="storeweekly"){
+    storeWeeklyBtn.className = "btn-sm btn-blue";
+    storeWeeklyView.style.display = "block";
+    renderSCCStoreWeekly();
   } else if(sccViewMode==="detail"){
     detailBtn.className = "btn-sm btn-blue";
     detailView.style.display = "block";
@@ -1212,6 +1293,16 @@ function renderSCC(){
   }
 }
 
+function sccSortByAvgDesc(rows, key){
+  key = key || "monthAvg";
+  return [...rows].sort((a,b)=>{
+    const av=a[key], bv=b[key];
+    if(av==null && bv==null) return 0;
+    if(av==null) return 1;
+    if(bv==null) return -1;
+    return bv-av;
+  });
+}
 function renderSCCWeekly(){
   const bus = sccBUs;
   /* BUごとの週別ゾーン平均（全店舗の当該週スコアの平均、0/未実施は除外） */
@@ -1226,12 +1317,14 @@ function renderSCCWeekly(){
     const monthAvg = monthVals.length ? monthVals.reduce((a,b)=>a+b,0)/monthVals.length : null;
     return {bu, weekAvgs, monthAvg};
   });
+  const sortedRows = sccSortByAvgDesc(rows);
 
-  document.getElementById("scc-weekly-tbody").innerHTML = rows.map(r=>{
-    const cells = r.weekAvgs.map(v=>{
+  document.getElementById("scc-weekly-tbody").innerHTML = sortedRows.map(r=>{
+    const cells = r.weekAvgs.map((v,wi)=>{
       const st = sccStatusColor(v);
       const label = v!=null ? v.toFixed(1) : "—";
-      return `<td><div style="height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:500;background:${st.bg};color:${st.text}">${label}</div></td>`;
+      return `<td><div class="scc-cell-link" style="height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:500;background:${st.bg};color:${st.text}"
+        onclick="sccGoToDetail('${r.bu}',sccDetailStore,${wi})" title="クリックして詳細チェック入力へ">${label}</div></td>`;
     }).join("");
     return `<tr><td class="store-name">${r.bu}</td>${cells}<td class="scc-avg-cell">${r.monthAvg!=null?r.monthAvg.toFixed(1):"—"}</td></tr>`;
   }).join("");
@@ -1247,37 +1340,92 @@ function renderSCCWeekly(){
     `<td></td></tr>`;
 }
 
+function renderSCCStoreWeekly(){
+  /* 店舗ごとの週別平均（全BUの当該週スコアの平均、0/未実施は除外） */
+  const rows = SCC_STORES.map(store=>{
+    const weekAvgs = [0,1,2,3,4].map(wi=>{
+      const vals = sccBUs
+        .map(bu=>sccStoreScores(bu, store)[wi])
+        .filter(v=>v>0);
+      return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
+    });
+    const monthVals = weekAvgs.filter(v=>v!=null);
+    const monthAvg = monthVals.length ? monthVals.reduce((a,b)=>a+b,0)/monthVals.length : null;
+
+    /* この店舗のBU別月間平均を算出し、絶好調／要注意BUを特定 */
+    const buAvgs = sccBUs
+      .map(bu=>({bu, avg: sccStoreAvg(sccStoreScores(bu, store))}))
+      .filter(b=>b.avg!=null);
+    let bestBU = null, worstBU = null;
+    if(buAvgs.length){
+      bestBU = buAvgs.reduce((a,b)=>b.avg>a.avg?b:a);
+      worstBU = buAvgs.reduce((a,b)=>b.avg<a.avg?b:a);
+      if(buAvgs.length===1) worstBU = null; /* データが1BUしかない場合は「要注意」は出さない */
+    }
+    return {store, weekAvgs, monthAvg, bestBU, worstBU};
+  });
+  const sortedRows = sccSortByAvgDesc(rows);
+
+  document.getElementById("scc-storeweekly-tbody").innerHTML = sortedRows.map(r=>{
+    const cells = r.weekAvgs.map((v,wi)=>{
+      const st = sccStatusColor(v);
+      const label = v!=null ? v.toFixed(1) : "—";
+      return `<td><div class="scc-cell-link" style="height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:500;background:${st.bg};color:${st.text}"
+        onclick="sccGoToDetail(sccActiveBU,'${r.store}',${wi})" title="クリックして詳細チェック入力へ">${label}</div></td>`;
+    }).join("");
+    const bestCell = r.bestBU
+      ? `<div class="scc-cell-link" style="font-size:11px;padding:2px 4px;border-radius:4px" onclick="sccGoToDetail('${r.bestBU.bu}','${r.store}',0)" title="クリックして詳細チェック入力へ"><span style="color:#0ca30c;font-weight:600">${r.bestBU.bu}</span><br><span style="color:#999">${r.bestBU.avg.toFixed(1)}点</span></div>`
+      : `<span style="font-size:11px;color:#bbb">—</span>`;
+    const worstCell = r.worstBU
+      ? `<div class="scc-cell-link" style="font-size:11px;padding:2px 4px;border-radius:4px" onclick="sccGoToDetail('${r.worstBU.bu}','${r.store}',0)" title="クリックして詳細チェック入力へ"><span style="color:#d03b3b;font-weight:600">${r.worstBU.bu}</span><br><span style="color:#999">${r.worstBU.avg.toFixed(1)}点</span></div>`
+      : `<span style="font-size:11px;color:#bbb">—</span>`;
+    return `<tr><td class="store-name">${r.store}</td>${cells}<td class="scc-avg-cell">${r.monthAvg!=null?r.monthAvg.toFixed(1):"—"}</td><td style="text-align:center">${bestCell}</td><td style="text-align:center">${worstCell}</td></tr>`;
+  }).join("");
+
+  /* 週ごとの全店舗平均（フッター） */
+  const weekTotals = [0,1,2,3,4].map(wi=>{
+    const vals = rows.map(r=>r.weekAvgs[wi]).filter(v=>v!=null);
+    return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
+  });
+  document.getElementById("scc-storeweekly-tfoot").innerHTML =
+    `<tr><td class="store-name" style="color:var(--text-secondary)">全店舗平均</td>` +
+    weekTotals.map(v=>`<td class="scc-avg-cell">${v!=null?v.toFixed(1):"—"}</td>`).join("") +
+    `<td></td><td></td><td></td></tr>`;
+}
+
 function renderSCCCompare(){
-  const bus = sccBUs;
-  /* 店舗×BUの平均を算出 */
+  /* BUごとの縦平均を算出し、平均降順にBUを並び替え */
+  const buAvgList = sccBUs.map(bu=>{
+    const vals = SCC_STORES.map(store=>sccStoreAvg(sccStoreScores(bu, store))).filter(v=>v!=null);
+    const avg = vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
+    return {bu, avg};
+  });
+  const sortedBuList = sccSortByAvgDesc(buAvgList, "avg");
+  const bus = sortedBuList.map(b=>b.bu);
+  const buAvgs = sortedBuList.map(b=>b.avg);
+
+  /* 店舗×BUの平均を算出（列は上でソートしたBU順） */
   const grid = SCC_STORES.map(store=>{
     const row = bus.map(bu=>sccStoreAvg(sccStoreScores(bu, store)));
-    return {store, row};
+    const vals = row.filter(v=>v!=null);
+    const avg = vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
+    return {store, row, avg};
   });
-  /* BUごとの縦平均 */
-  const buAvgs = bus.map((bu,bi)=>{
-    const vals = grid.map(g=>g.row[bi]).filter(v=>v!=null);
-    return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
-  });
-  /* 店舗ごとの横平均 */
-  const storeAvgs = grid.map(g=>{
-    const vals = g.row.filter(v=>v!=null);
-    return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
-  });
+  const sortedGrid = sccSortByAvgDesc(grid, "avg");
 
   document.getElementById("scc-compare-thead").innerHTML =
     `<th class="store-col">店舗</th>` +
     bus.map(bu=>`<th>${bu}</th>`).join("") +
     `<th>横断平均</th>`;
 
-  document.getElementById("scc-compare-tbody").innerHTML = grid.map((g,gi)=>{
-    const cells = g.row.map(v=>{
+  document.getElementById("scc-compare-tbody").innerHTML = sortedGrid.map(g=>{
+    const cells = g.row.map((v,bi)=>{
       const st = sccStatusColor(v);
       const label = v!=null ? v.toFixed(1) : "—";
-      return `<td><div style="height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:500;background:${st.bg};color:${st.text}">${label}</div></td>`;
+      return `<td><div class="scc-cell-link" style="height:32px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:500;background:${st.bg};color:${st.text}"
+        onclick="sccGoToDetail('${bus[bi]}','${g.store}',0)" title="クリックして詳細チェック入力へ">${label}</div></td>`;
     }).join("");
-    const avgV = storeAvgs[gi];
-    return `<tr><td class="store-name">${g.store}</td>${cells}<td class="scc-avg-cell">${avgV!=null?avgV.toFixed(1):"—"}</td></tr>`;
+    return `<tr><td class="store-name">${g.store}</td>${cells}<td class="scc-avg-cell">${g.avg!=null?g.avg.toFixed(1):"—"}</td></tr>`;
   }).join("");
 
   document.getElementById("scc-compare-tfoot").innerHTML =
@@ -1391,24 +1539,99 @@ function renderSCCInput(){
 }
 
 /* ============================================================
+   ナビゲーション（ドラッグ&ドロップで並び替え可能）
+============================================================ */
+const NAV_ITEMS_DEFAULT = [
+  {id:"home", label:"🏠 ホーム"},
+  {id:"summary", label:"📊 サマリー"},
+  {id:"ranking", label:"🏆 ランキング"},
+  {id:"blocks", label:"🧱 差額金額"},
+  {id:"scc", label:"🏪 SCC"},
+  {id:"tools", label:"⚙ 設定"},
+  {id:"changelog", label:"📝 修正履歴"},
+];
+let navOrder = [];
+let navDragSrc = null;
+
+function loadNavOrder(){
+  const validIds = NAV_ITEMS_DEFAULT.map(n=>n.id);
+  try{
+    const saved = localStorage.getItem("nav_order_v1");
+    let ids = saved ? JSON.parse(saved) : [...validIds];
+    ids = ids.filter(id=>validIds.includes(id));
+    validIds.forEach(id=>{ if(!ids.includes(id)) ids.push(id); }); /* 新規追加タブは末尾に補完 */
+    navOrder = ids;
+  }catch(e){
+    navOrder = [...validIds];
+  }
+}
+function saveNavOrder(){
+  localStorage.setItem("nav_order_v1", JSON.stringify(navOrder));
+}
+function resetNavOrder(){
+  navOrder = NAV_ITEMS_DEFAULT.map(n=>n.id);
+  saveNavOrder();
+  renderNav();
+}
+function renderNav(){
+  const wrap = document.getElementById("nav-tabs-wrap");
+  wrap.innerHTML = navOrder.map(id=>{
+    const item = NAV_ITEMS_DEFAULT.find(n=>n.id===id);
+    if(!item) return "";
+    const activeCls = (id===currentPage) ? " active" : "";
+    return `<button class="nav-tab${activeCls}" draggable="true" data-id="${id}"
+      onclick="switchPage('${id}')"
+      ondragstart="navDragStart(event)"
+      ondragover="navDragOver(event)"
+      ondragleave="navDragLeave(event)"
+      ondrop="navDrop(event)"
+      ondragend="navDragEnd(event)"
+      title="ドラッグでタブの順番を入れ替えられます">${item.label}</button>`;
+  }).join("");
+}
+function navDragStart(e){
+  navDragSrc = e.currentTarget.dataset.id;
+  e.currentTarget.classList.add("dragging");
+  e.dataTransfer.effectAllowed = "move";
+  try{ e.dataTransfer.setData("text/plain", navDragSrc); }catch(err){}
+}
+function navDragOver(e){
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+  e.currentTarget.classList.add("drag-over");
+}
+function navDragLeave(e){
+  e.currentTarget.classList.remove("drag-over");
+}
+function navDrop(e){
+  e.preventDefault();
+  e.currentTarget.classList.remove("drag-over");
+  const targetId = e.currentTarget.dataset.id;
+  if(!navDragSrc || navDragSrc===targetId) return;
+  const fromIdx = navOrder.indexOf(navDragSrc);
+  const toIdx = navOrder.indexOf(targetId);
+  if(fromIdx===-1 || toIdx===-1) return;
+  navOrder.splice(fromIdx,1);
+  navOrder.splice(toIdx,0,navDragSrc);
+  saveNavOrder();
+  renderNav();
+}
+function navDragEnd(){
+  document.querySelectorAll(".nav-tab").forEach(t=>t.classList.remove("dragging","drag-over"));
+  navDragSrc = null;
+}
+
+/* ============================================================
    ページ切り替え
 ============================================================ */
 let currentPage = "home";
-function switchPage(id, navEl){
+function switchPage(id){
   document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
-  document.querySelectorAll(".nav-tab").forEach(t=>t.classList.remove("active"));
   document.getElementById("page-"+id).classList.add("active");
-  /* ナビタブ由来のクリックならハイライト、BUカード経由なら対応するナビタブを探す */
-  const target = navEl || (event && event.currentTarget && event.currentTarget.classList.contains("nav-tab") ? event.currentTarget : null);
-  if(target && target.classList.contains("nav-tab")){
-    target.classList.add("active");
-  } else {
-    const navMap = {home:"🏠 ホーム", summary:"📊 サマリー", ranking:"🏆 ランキング", blocks:"🧱 差額金額", scc:"🏪 SCC", tools:"⚙ 設定", changelog:"📝 修正履歴"};
-    if(navMap[id]){
-      document.querySelectorAll(".nav-tab").forEach(t=>{ if(t.textContent.trim()===navMap[id]) t.classList.add("active"); });
-    }
-  }
   currentPage = id;
+  document.querySelectorAll(".nav-tab").forEach(t=>{
+    t.classList.toggle("active", t.dataset.id===id);
+  });
   if(id==="home") renderBuSelectGrid();
   else if(id==="summary") renderSummary();
   else if(id==="ranking") renderStoreRankings();
@@ -3699,6 +3922,8 @@ const UPLOADED_ACTUALS_6 = {"生活消耗":{"上津役":{"1":{"val":701,"isLY":f
 
 fillDefaultLY();
 saveAll();
+loadNavOrder();
+renderNav();
 loadSCCData();
 loadSCCDetailData();
 sccMergeBUData();
