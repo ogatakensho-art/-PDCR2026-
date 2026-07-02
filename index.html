@@ -1970,18 +1970,46 @@ function sbuSyncStop(){
   if(sbuSyncTimer){ clearInterval(sbuSyncTimer); sbuSyncTimer=null; }
 }
 /* 1件のkey/jsonをスプレッドシートへ送信（失敗しても画面操作は止めない） */
+/* 隠しiframe・フォームを用意する（Apps Script宛のPOSTがリダイレクトでGETに
+   化けてしまう問題を避けるため、fetch()ではなくフォーム送信を使う） */
+function sbuSyncEnsureForm(){
+  let frame = document.getElementById("sbu-sync-frame");
+  if(!frame){
+    frame = document.createElement("iframe");
+    frame.id = "sbu-sync-frame";
+    frame.name = "sbuSyncFrame";
+    frame.style.display = "none";
+    document.body.appendChild(frame);
+  }
+  let form = document.getElementById("sbu-sync-form");
+  if(!form){
+    form = document.createElement("form");
+    form.id = "sbu-sync-form";
+    form.method = "POST";
+    form.target = "sbuSyncFrame";
+    form.style.display = "none";
+    const keyInput = document.createElement("input");
+    keyInput.type = "hidden"; keyInput.name = "key"; keyInput.id = "sbu-sync-form-key";
+    const jsonInput = document.createElement("input");
+    jsonInput.type = "hidden"; jsonInput.name = "json"; jsonInput.id = "sbu-sync-form-json";
+    form.appendChild(keyInput);
+    form.appendChild(jsonInput);
+    document.body.appendChild(form);
+  }
+  return form;
+}
 function sbuSyncPushKey(key, jsonStr){
   if(!sbuSyncEnabled || !sbuSyncUrl) return;
-  fetch(sbuSyncUrl, {
-    method: "POST",
-    mode: "no-cors", /* CORSの制限を受けず送信だけ行う（レスポンス内容は読めないが送信は成功する） */
-    headers: {"Content-Type": "text/plain;charset=utf-8"}, /* プリフライト回避のため text/plain で送る */
-    body: JSON.stringify({key, json: jsonStr})
-  }).then(()=>{
+  try{
+    const form = sbuSyncEnsureForm();
+    form.action = sbuSyncUrl;
+    document.getElementById("sbu-sync-form-key").value = key;
+    document.getElementById("sbu-sync-form-json").value = jsonStr;
+    form.submit();
     sbuSyncSetStatus("送信済み："+new Date().toLocaleTimeString());
-  }).catch(()=>{
+  }catch(e){
     sbuSyncSetStatus("⚠ 送信失敗（通信環境を確認してください）");
-  });
+  }
 }
 /* 指定BU・月の実績/計画をまとめて送信 */
 function sbuSyncPushDept(dept, month){
