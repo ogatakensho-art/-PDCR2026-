@@ -967,7 +967,7 @@ DEPTS.forEach(d=>activeWeek[d]="all");
 
 /* 表示オプション: {事業部: {daily,plan,lastyear,diff,weekly}} */
 let opts = {};
-DEPTS.forEach(d=>opts[d]={daily:true,plan:true,lastyear:true,diff:false,weekly:false,budgetRatio:true});
+DEPTS.forEach(d=>opts[d]={daily:true,plan:true,lastyear:true,diff:false,weekly:false,budgetRatio:true,lyRaw:true});
 
 /* ============================================================
    SCC（ストアコンディションチェック）
@@ -3926,6 +3926,7 @@ function buildDeptHTML(dept){
     <div class="flex-row" style="gap:6px;padding:8px 10px 0">
       <span style="font-size:11px;color:#888">表示項目：</span>
       <button class="btn-sm wsc-toggle" id="wsc-budget-${dept}" onclick="toggleWSCol('${dept}','budget')">予算</button>
+      <button class="btn-sm wsc-toggle" id="wsc-lyRaw-${dept}" onclick="toggleWSCol('${dept}','lyRaw')">昨年実績</button>
       <button class="btn-sm wsc-toggle" id="wsc-plan-${dept}" onclick="toggleWSCol('${dept}','plan')">計画</button>
       <button class="btn-sm wsc-toggle" id="wsc-actual-${dept}" onclick="toggleWSCol('${dept}','actual')">実績</button>
       <button class="btn-sm wsc-toggle" id="wsc-budgetRatio-${dept}" onclick="toggleWSCol('${dept}','budgetRatio')">予算比</button>
@@ -3963,6 +3964,7 @@ function buildDeptHTML(dept){
   <div class="flex-row">
     <span style="font-size:11px;color:#888">表示：</span>
     <button class="pill on" id="tog-${dept}-daily"    onclick="togOpt('${dept}','daily')">日割り予算</button>
+    <button class="pill on" id="tog-${dept}-lyRaw"    onclick="togOpt('${dept}','lyRaw')">昨年実績</button>
     <button class="pill on" id="tog-${dept}-plan"     onclick="togOpt('${dept}','plan')">計画入力</button>
     <button class="pill on" id="tog-${dept}-budgetRatio" onclick="togOpt('${dept}','budgetRatio')">予算比</button>
     <button class="pill on" id="tog-${dept}-lastyear" onclick="togOpt('${dept}','lastyear')">昨年比</button>
@@ -4012,6 +4014,7 @@ function renderDeptWeekPDCA(dept){
 let wscState = {};
 const WSC_COLS = [
   {key:"budget",      label:"予算"},
+  {key:"lyRaw",       label:"昨年実績"},
   {key:"plan",        label:"計画"},
   {key:"actual",      label:"実績"},
   {key:"budgetRatio", label:"予算比"},
@@ -4019,7 +4022,7 @@ const WSC_COLS = [
   {key:"lyRatio",     label:"昨対比"},
 ];
 function wscInit(dept){
-  if(!wscState[dept]) wscState[dept]={budget:true,plan:true,actual:true,budgetRatio:true,planRatio:true,lyRatio:true};
+  if(!wscState[dept]) wscState[dept]={budget:true,lyRaw:true,plan:true,actual:true,budgetRatio:true,planRatio:true,lyRatio:true};
 }
 function toggleWSCol(dept,key){
   wscInit(dept);
@@ -4049,7 +4052,7 @@ function renderDeptWeekSummary(dept){
     const r=ratioW(dept,s,ds);
     const br=a!=null&&b?a/b:null;
     const ly=sumL(dept,s,ds), lyr=a!=null&&ly?a/ly:null;
-    return {budget:b, plan:p, actual:a, budgetRatio:br, planRatio:r, lyRatio:lyr};
+    return {budget:b, lyRaw:ly, plan:p, actual:a, budgetRatio:br, planRatio:r, lyRatio:lyr};
   }
   function calcTotal(ds){
     let tb=0,tp=0,ta=0,tl=0,hasTa=false;
@@ -4062,10 +4065,11 @@ function renderDeptWeekSummary(dept){
     const r=hasTa&&tp?ta/tp:null;
     const br=hasTa&&tb?ta/tb:null;
     const lyr=hasTa&&tl?ta/tl:null;
-    return {budget:tb, plan:tp, actual:hasTa?ta:null, budgetRatio:br, planRatio:r, lyRatio:lyr};
+    return {budget:tb, lyRaw:tl, plan:tp, actual:hasTa?ta:null, budgetRatio:br, planRatio:r, lyRatio:lyr};
   }
   function cellHtml(row,key){
     if(key==="budget")      return `<td class="sep">${f(row.budget||null)}</td>`;
+    if(key==="lyRaw")       return `<td style="color:#999">${f(row.lyRaw||null)}</td>`;
     if(key==="plan")        return `<td>${f(row.plan)}</td>`;
     if(key==="actual")      return `<td>${f(row.actual)}</td>`;
     if(key==="budgetRatio") return `<td class="${rc(row.budgetRatio)}">${fr(row.budgetRatio)}</td>`;
@@ -4208,11 +4212,11 @@ function renderDeptTabs(dept){
 
 function renderDeptTable(dept){
   const m=getMonth(),days=daysInMonth(2026,m);
-  const {daily,plan,lastyear,diff,weekly,budgetRatio}=opts[dept];
+  const {daily,plan,lastyear,diff,weekly,budgetRatio,lyRaw}=opts[dept];
   const aw=activeWeek[dept];
   const wis=aw==="all"?getWeeks().map((_,i)=>i).filter(i=>getWeeks()[i].s<=days):[aw];
   let span=2;
-  if(daily&&!weekly)span++;if(plan&&!weekly)span++;
+  if(daily&&!weekly)span++;if(lyRaw&&!weekly)span++;if(plan&&!weekly)span++;
   if(budgetRatio)span++;if(lastyear)span++;if(diff)span++;
 
   /* thead（全週共通） */
@@ -4221,10 +4225,11 @@ function renderDeptTable(dept){
   stores.forEach(s=>thead+=`<th colspan="${span}" class="sh sep">${s}店</th>`);
   thead+=`</tr><tr><th></th><th></th><th></th>`;
   const headCellsBlock=()=>{
-    let h="";
-    if(daily&&!weekly) h+=`<th class="sep" style="color:#aaa;min-width:58px">日割予算</th>`;
-    if(plan&&!weekly)  h+=`<th class="${daily&&!weekly?'':'sep'}" style="color:#ce93d8;min-width:62px">計画</th>`;
-    if(!daily&&!plan)  h+=`<th class="sep"></th>`;
+    let h="", used=false;
+    if(daily&&!weekly){ h+=`<th class="sep" style="color:#aaa;min-width:58px">日割予算</th>`; used=true; }
+    if(lyRaw&&!weekly){ h+=`<th class="${used?'':'sep'}" style="color:#999;min-width:58px">昨年実績</th>`; used=true; }
+    if(plan&&!weekly)  { h+=`<th class="${used?'':'sep'}" style="color:#ce93d8;min-width:62px">計画</th>`; used=true; }
+    if(!used)  h+=`<th class="sep"></th>`;
     h+=`<th>実績</th>`;
     if(budgetRatio) h+=`<th style="min-width:50px">予算比</th>`;
     h+=`<th style="min-width:50px">計画比</th>`;
@@ -4260,8 +4265,9 @@ function renderDeptTable(dept){
           const dlyr=dta!=null&&dtl?dta/dtl:null;
           const ddv=dta!=null?dta-dbase:null;
           if(daily) tbody+=`<td class="sep" style="color:#aaa;font-weight:500">${f(dtb||null)}</td>`;
-          if(plan)  tbody+=`<td class="${!daily?'sep':''}" style="color:#6a1b9a;font-weight:500">${f(dtp)}</td>`;
-          if(!daily&&!plan) tbody+=`<td class="sep"></td>`;
+          if(lyRaw) tbody+=`<td class="${daily?'':'sep'}" style="color:#999;font-weight:500">${f(dtl||null)}</td>`;
+          if(plan)  tbody+=`<td class="${!daily&&!lyRaw?'sep':''}" style="color:#6a1b9a;font-weight:500">${f(dtp)}</td>`;
+          if(!daily&&!lyRaw&&!plan) tbody+=`<td class="sep"></td>`;
           tbody+=`<td style="font-weight:500">${f(dta)}</td>`;
           if(budgetRatio) tbody+=`<td class="${rc(dbr)}" style="font-weight:500">${fr(dbr)}</td>`;
           tbody+=`<td class="${rc(dr)}" style="font-weight:500">${fr(dr)}</td>`;
@@ -4274,8 +4280,9 @@ function renderDeptTable(dept){
           const r=ratio(dept,s,d),lyr=a!=null&&ly?a/ly:null,dv=a!=null?a-(p!=null?p:b):null;
           const br=a!=null&&b?a/b:null;
           if(daily) tbody+=`<td class="${si===0?'sep':''}" style="color:#aaa">${f(b)}</td>`;
-          if(plan)  tbody+=`<td class="${!daily&&si===0?'sep':''}"><input class="pi" type="number" value="${p!=null?p:''}" placeholder="—" onchange="up2('${dept}','${s}',${d},this.value)" onkeydown="if(event.key==='Enter'){up2('${dept}','${s}',${d},this.value);this.blur()}"></td>`;
-          if(!daily&&!plan) tbody+=`<td class="${si===0?'sep':''}"></td>`;
+          if(lyRaw) tbody+=`<td class="${!daily&&si===0?'sep':''}" style="color:#999">${f(ly)}</td>`;
+          if(plan)  tbody+=`<td class="${!daily&&!lyRaw&&si===0?'sep':''}"><input class="pi" type="number" value="${p!=null?p:''}" placeholder="—" onchange="up2('${dept}','${s}',${d},this.value)" onkeydown="if(event.key==='Enter'){up2('${dept}','${s}',${d},this.value);this.blur()}"></td>`;
+          if(!daily&&!lyRaw&&!plan) tbody+=`<td class="${si===0?'sep':''}"></td>`;
           tbody+=`<td><input class="ai${auto?' ly':''}" type="number" value="${a!=null?a:''}" placeholder="—" onchange="ua('${dept}','${s}',${d},this.value)" onkeydown="if(event.key==='Enter'){ua('${dept}','${s}',${d},this.value);this.blur()}" title="${auto?'昨対100%自動入力（上書き可）':''}"></td>`;
           if(budgetRatio) tbody+=`<td class="${rc(br)}">${fr(br)}</td>`;
           tbody+=`<td class="${rc(r)}">${fr(r)}</td>`;
@@ -4296,8 +4303,9 @@ function renderDeptTable(dept){
       const dlyr=dta!=null&&dtl?dta/dtl:null;
       const ddv=dta!=null?dta-dbase:null;
       if(daily&&!weekly) tbody+=`<td class="sep" style="color:#aaa">${f(dtb)}</td>`;
-      if(plan&&!weekly)  tbody+=`<td class="${!(daily&&!weekly)?'sep':''}" style="color:#6a1b9a">${f(dtp)}</td>`;
-      if(!daily&&!plan)  tbody+=`<td class="sep"></td>`;
+      if(lyRaw&&!weekly) tbody+=`<td class="${daily&&!weekly?'':'sep'}" style="color:#999">${f(dtl)}</td>`;
+      if(plan&&!weekly)  tbody+=`<td class="${!(daily&&!weekly)&&!(lyRaw&&!weekly)?'sep':''}" style="color:#6a1b9a">${f(dtp)}</td>`;
+      if(!daily&&!lyRaw&&!plan)  tbody+=`<td class="sep"></td>`;
       tbody+=`<td>${f(dta)}</td>`;
       if(budgetRatio) tbody+=`<td class="${rc(dbr)}">${fr(dbr)}</td>`;
       tbody+=`<td class="${rc(dr)}">${fr(dr)}</td>`;
@@ -4309,8 +4317,9 @@ function renderDeptTable(dept){
       const r=ratioW(dept,s,wd),lyr=a!=null&&ly?a/ly:null,dv=a!=null?a-(p!=null?p:b):null;
       const br=a!=null&&b?a/b:null;
       if(daily&&!weekly) tbody+=`<td style="color:#aaa">${f(b)}</td>`;
+      if(lyRaw&&!weekly) tbody+=`<td style="color:#999">${f(ly)}</td>`;
       if(plan&&!weekly)  tbody+=`<td style="color:#6a1b9a">${f(p)}</td>`;
-      if(!daily&&!plan)  tbody+=`<td></td>`;
+      if(!daily&&!lyRaw&&!plan)  tbody+=`<td></td>`;
       tbody+=`<td>${f(a)}</td>`;
       if(budgetRatio) tbody+=`<td class="${rc(br)}">${fr(br)}</td>`;
       tbody+=`<td class="${rc(r)}">${fr(r)}</td>`;
