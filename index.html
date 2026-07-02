@@ -1974,6 +1974,7 @@ function sbuSyncPushKey(key, jsonStr){
   if(!sbuSyncEnabled || !sbuSyncUrl) return;
   fetch(sbuSyncUrl, {
     method: "POST",
+    mode: "no-cors", /* CORSの制限を受けず送信だけ行う（レスポンス内容は読めないが送信は成功する） */
     headers: {"Content-Type": "text/plain;charset=utf-8"}, /* プリフライト回避のため text/plain で送る */
     body: JSON.stringify({key, json: jsonStr})
   }).then(()=>{
@@ -1994,31 +1995,58 @@ function sbuSyncPullAll(manual){
   if(!sbuSyncUrl || sbuSyncPulling) return;
   sbuSyncPulling = true;
   if(manual) sbuSyncSetStatus("同期中…");
-  fetch(sbuSyncUrl + "?action=getAll")
-    .then(r=>r.json())
-    .then(res=>{
-      sbuSyncPulling = false;
-      if(!res || !res.ok || !res.data){ sbuSyncSetStatus("⚠ 取得に失敗しました"); return; }
-      let changed = 0;
-      Object.keys(res.data).forEach(key=>{
-        const remote = res.data[key];
-        const localJson = localStorage.getItem(key);
-        if(localJson !== remote.json){
-          localStorage.setItem(key, remote.json);
-          changed++;
-        }
-      });
-      sbuSyncSetStatus(`最終同期：${new Date().toLocaleTimeString()}（${changed}件更新）`);
-      if(changed>0){
-        loadAll();
-        fillDefaultLY();
-        renderCurrent();
+
+  /* JSONP方式で取得（script.google.comのCORS制限を回避するため、
+     fetch()ではなく<script>タグの読み込みを利用する） */
+  const cbName = "sbuSyncCb_" + Date.now();
+  let finished = false;
+  const cleanup = (scriptEl)=>{
+    delete window[cbName];
+    if(scriptEl && scriptEl.parentNode) scriptEl.parentNode.removeChild(scriptEl);
+  };
+  const timeoutId = setTimeout(()=>{
+    if(finished) return;
+    finished = true;
+    sbuSyncPulling = false;
+    sbuSyncSetStatus("⚠ 取得に失敗しました（URL・公開設定を確認してください）");
+    cleanup(scriptEl);
+  }, 15000);
+
+  window[cbName] = function(res){
+    if(finished) return;
+    finished = true;
+    clearTimeout(timeoutId);
+    sbuSyncPulling = false;
+    cleanup(scriptEl);
+    if(!res || !res.ok || !res.data){ sbuSyncSetStatus("⚠ 取得に失敗しました"); return; }
+    let changed = 0;
+    Object.keys(res.data).forEach(key=>{
+      const remote = res.data[key];
+      const localJson = localStorage.getItem(key);
+      if(localJson !== remote.json){
+        localStorage.setItem(key, remote.json);
+        changed++;
       }
-    })
-    .catch(()=>{
-      sbuSyncPulling = false;
-      sbuSyncSetStatus("⚠ 取得に失敗しました（URL・公開設定を確認してください）");
     });
+    sbuSyncSetStatus(`最終同期：${new Date().toLocaleTimeString()}（${changed}件更新）`);
+    if(changed>0){
+      loadAll();
+      fillDefaultLY();
+      renderCurrent();
+    }
+  };
+
+  const scriptEl = document.createElement("script");
+  scriptEl.src = sbuSyncUrl + "?action=getAll&callback=" + cbName;
+  scriptEl.onerror = ()=>{
+    if(finished) return;
+    finished = true;
+    clearTimeout(timeoutId);
+    sbuSyncPulling = false;
+    sbuSyncSetStatus("⚠ 取得に失敗しました（URL・公開設定を確認してください）");
+    cleanup(scriptEl);
+  };
+  document.head.appendChild(scriptEl);
 }
 function sbuSyncInit(){
   const input = document.getElementById("sbu-sync-url");
