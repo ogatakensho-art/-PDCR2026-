@@ -967,7 +967,7 @@ DEPTS.forEach(d=>activeWeek[d]="all");
 
 /* 表示オプション: {事業部: {daily,plan,lastyear,diff,weekly}} */
 let opts = {};
-DEPTS.forEach(d=>opts[d]={daily:true,plan:true,lastyear:true,diff:false,weekly:false,budgetRatio:true,lyRaw:true});
+DEPTS.forEach(d=>opts[d]={daily:true,plan:true,lastyear:true,diff:false,weekly:false,budgetRatio:true,lyRaw:true,weather:true});
 
 /* ============================================================
    SCC（ストアコンディションチェック）
@@ -1796,6 +1796,75 @@ function switchPage(id){
 ============================================================ */
 function getMonth(){return +document.getElementById("sel-month").value;}
 function daysInMonth(y,m){return new Date(y,m,0).getDate();}
+
+/* ============================================================
+   天気データ（Open-Meteoを使用。気象庁データも取り込んだ無料の気象API）
+   ・過去（昨年同時期）：archive-api（実測値）
+   ・今年（当日〜16日先）：forecast-api（予報）
+   遠賀・水巻エリア付近の座標を使用（全店舗共通の1地点）
+============================================================ */
+const WEATHER_LAT = 33.85, WEATHER_LON = 130.66;
+const WEATHER_ICON = {
+  0:"☀️",1:"🌤️",2:"⛅",3:"☁️",
+  45:"🌫️",48:"🌫️",
+  51:"🌦️",53:"🌦️",55:"🌦️",56:"🌦️",57:"🌦️",
+  61:"🌧️",63:"🌧️",65:"🌧️",66:"🌧️",67:"🌧️",
+  71:"🌨️",73:"🌨️",75:"🌨️",77:"🌨️",
+  80:"🌦️",81:"🌧️",82:"⛈️",85:"🌨️",86:"🌨️",
+  95:"⛈️",96:"⛈️",99:"⛈️",
+};
+function weatherIcon(code){ return WEATHER_ICON[code] || "—"; }
+const pad2=n=>String(n).padStart(2,"0");
+let weatherCache = {}; /* {"2025-07-01":{code,tmax,tmin}, ...} */
+function weatherLoadCache(){
+  try{ weatherCache = JSON.parse(localStorage.getItem("weather_cache_v1")||"{}"); }catch(e){ weatherCache={}; }
+}
+function weatherSaveCache(){
+  try{ localStorage.setItem("weather_cache_v1", JSON.stringify(weatherCache)); }catch(e){}
+}
+function weatherGet(iso){ return weatherCache[iso] || null; }
+function weatherApplyDaily(res){
+  if(!res || !res.daily) return false;
+  res.daily.time.forEach((d,i)=>{
+    weatherCache[d] = {
+      code: res.daily.weathercode[i],
+      tmax: res.daily.temperature_2m_max[i],
+      tmin: res.daily.temperature_2m_min[i]
+    };
+  });
+  weatherSaveCache();
+  return true;
+}
+/* 昨年同月の実測天気を取得（既に月初〜月末まで揃っていれば再取得しない） */
+function weatherFetchHistorical(year, month){
+  const days = daysInMonth(year, month);
+  const start = `${year}-${pad2(month)}-01`;
+  const end = `${year}-${pad2(month)}-${pad2(days)}`;
+  if(weatherCache[start] && weatherCache[end]) return;
+  const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${WEATHER_LAT}&longitude=${WEATHER_LON}&start_date=${start}&end_date=${end}&daily=weathercode,temperature_2m_max,temperature_2m_min&timezone=Asia%2FTokyo`;
+  fetch(url).then(r=>r.json()).then(res=>{
+    if(weatherApplyDaily(res)) renderCurrent();
+  }).catch(()=>{});
+}
+/* 今年の予報（16日先まで）を取得。6時間以内に取得済みなら再取得しない */
+function weatherFetchForecast(){
+  const lastFetch = localStorage.getItem("weather_forecast_fetched_at");
+  if(lastFetch && (Date.now()-Number(lastFetch) < 6*3600*1000)) return;
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${WEATHER_LAT}&longitude=${WEATHER_LON}&daily=weathercode,temperature_2m_max,temperature_2m_min&timezone=Asia%2FTokyo&forecast_days=16`;
+  fetch(url).then(r=>r.json()).then(res=>{
+    if(weatherApplyDaily(res)){
+      localStorage.setItem("weather_forecast_fetched_at", String(Date.now()));
+      renderCurrent();
+    }
+  }).catch(()=>{});
+}
+function weatherCellHtml(iso, muted){
+  const w = weatherGet(iso);
+  if(!w) return `<td style="text-align:center;font-size:11px;color:var(--text-muted,#bbb)">—</td>`;
+  const color = muted ? "color:#999;" : "";
+  return `<td style="text-align:center;font-size:11px;white-space:nowrap;${color}">${weatherIcon(w.code)} ${Math.round(w.tmax)}/${Math.round(w.tmin)}</td>`;
+}
+
 let lastSelectedMonth=null;
 function onMonthChange(){
   saveAll(lastSelectedMonth); /* 切替前の月のデータを、切替前の月のキーに保存する */
@@ -3963,6 +4032,7 @@ function buildDeptHTML(dept){
   <!-- 表示オプション -->
   <div class="flex-row">
     <span style="font-size:11px;color:#888">表示：</span>
+    <button class="pill on" id="tog-${dept}-weather"  onclick="togOpt('${dept}','weather')">天気</button>
     <button class="pill on" id="tog-${dept}-daily"    onclick="togOpt('${dept}','daily')">日割り予算</button>
     <button class="pill on" id="tog-${dept}-lyRaw"    onclick="togOpt('${dept}','lyRaw')">昨年実績</button>
     <button class="pill on" id="tog-${dept}-plan"     onclick="togOpt('${dept}','plan')">計画入力</button>
@@ -4212,18 +4282,26 @@ function renderDeptTabs(dept){
 
 function renderDeptTable(dept){
   const m=getMonth(),days=daysInMonth(2026,m);
-  const {daily,plan,lastyear,diff,weekly,budgetRatio,lyRaw}=opts[dept];
+  const {daily,plan,lastyear,diff,weekly,budgetRatio,lyRaw,weather}=opts[dept];
   const aw=activeWeek[dept];
   const wis=aw==="all"?getWeeks().map((_,i)=>i).filter(i=>getWeeks()[i].s<=days):[aw];
   let span=2;
   if(daily&&!weekly)span++;if(lyRaw&&!weekly)span++;if(plan&&!weekly)span++;
   if(budgetRatio)span++;if(lastyear)span++;if(diff)span++;
 
+  /* 天気データを必要に応じて取得（昨年同月の実測・今年の予報） */
+  if(weather){
+    weatherFetchHistorical(2025, m);
+    weatherFetchForecast();
+  }
+
   /* thead（全週共通） */
   let thead=`<tr><th style="min-width:28px">週</th><th class="lc" style="min-width:38px">日付</th><th style="min-width:20px">曜</th>`;
+  if(weather) thead+=`<th style="min-width:60px">今年天気</th><th style="min-width:60px;color:#999">昨年天気</th>`;
   thead+=`<th colspan="${span}" class="sh sep" style="background:#1e3a5f">全店計</th>`;
   stores.forEach(s=>thead+=`<th colspan="${span}" class="sh sep">${s}店</th>`);
   thead+=`</tr><tr><th></th><th></th><th></th>`;
+  if(weather) thead+=`<th></th><th></th>`;
   const headCellsBlock=()=>{
     let h="", used=false;
     if(daily&&!weekly){ h+=`<th class="sep" style="color:#aaa;min-width:58px">日割予算</th>`; used=true; }
@@ -4256,6 +4334,10 @@ function renderDeptTable(dept){
         const cls=dow===0?"sun":dow===6?"sat":"";
         tbody+=`<tr class="${cls}"><td class="cc" style="font-size:10px;color:#aaa">${di===0?getWeeks()[wi].label:""}</td>
           <td class="lc">${m}/${d}</td><td class="cc">${DOW[dow]}</td>`;
+        if(weather){
+          tbody+=weatherCellHtml(`2026-${pad2(m)}-${pad2(d)}`, false);
+          tbody+=weatherCellHtml(`2025-${pad2(m)}-${pad2(d)}`, true);
+        }
         /* 全店計ブロック */
         {
           const dtb=deptSumB(dept,[d]), dta=deptSumA(dept,[d]), dtl=deptSumL(dept,[d]), dtp=deptSumP(dept,[d]);
@@ -4295,6 +4377,7 @@ function renderDeptTable(dept){
 
     /* 小計行 */
     tbody+=`<tr class="sub"><td></td><td class="lc" colspan="2">${getWeeks()[wi].label}　小計</td>`;
+    if(weather) tbody+=`<td></td><td></td>`;
     {
       const dtb=deptSumB(dept,wd), dta=deptSumA(dept,wd), dtl=deptSumL(dept,wd), dtp=deptSumP(dept,wd);
       const dbase=dtp!=null?dtp:dtb;
@@ -4485,6 +4568,7 @@ fillDefaultLY();
 saveAll();
 lastSelectedMonth=getMonth();
 sbuSyncInit();
+weatherLoadCache();
 loadNavOrder();
 renderNav();
 loadSCCData();
