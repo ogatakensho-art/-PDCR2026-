@@ -880,6 +880,25 @@ input.pi:focus{outline:none;border-color:#9c27b0;background:#fff}
       </div>
     </div>
 
+    <!-- リアルタイム同期 -->
+    <div class="card" style="grid-column:1/-1">
+      <div class="card-body">
+        <div class="card-title">⚡ リアルタイム同期（Googleスプレッドシート）</div>
+        <p style="font-size:11px;color:#888;margin-bottom:10px">
+          Google Apps Scriptで発行したウェブアプリのURLを設定すると、入力内容が自動でスプレッドシートに送信され、他の端末は約20秒おきに自動で取得するようになります。設定方法は同梱の「SyncScript.gs」を参照してください。
+        </p>
+        <div class="flex-row" style="gap:8px;margin-bottom:8px">
+          <input type="text" id="sbu-sync-url" placeholder="https://script.google.com/macros/s/xxxx/exec" style="flex:1;min-width:280px;font-size:12px;padding:6px 8px;border:0.5px solid #c0c0be;border-radius:5px">
+          <button class="btn-sm" onclick="sbuSyncSaveSettings()">保存</button>
+        </div>
+        <div class="flex-row" style="gap:8px;align-items:center">
+          <button class="btn-sm" id="sbu-sync-toggle" onclick="sbuSyncToggle()">同期：OFF</button>
+          <button class="btn-sm" onclick="sbuSyncPullAll(true)">🔄 今すぐ同期</button>
+          <span id="sbu-sync-status" style="font-size:11px;color:#888">未設定</span>
+        </div>
+      </div>
+    </div>
+
     <!-- データ管理 -->
     <div class="card">
       <div class="card-body">
@@ -1907,6 +1926,112 @@ function sbuMergeImportedData(data){
   return changed;
 }
 
+/* ============================================================
+   リアルタイム同期（Googleスプレッドシート／Apps Script Web App）
+============================================================ */
+let sbuSyncUrl = localStorage.getItem("sbu2_sync_url") || "";
+let sbuSyncEnabled = localStorage.getItem("sbu2_sync_enabled") === "1";
+let sbuSyncTimer = null;
+let sbuSyncPulling = false;
+
+function sbuSyncSetStatus(msg){
+  const el = document.getElementById("sbu-sync-status");
+  if(el) el.textContent = msg;
+}
+function sbuSyncSaveSettings(){
+  const input = document.getElementById("sbu-sync-url");
+  sbuSyncUrl = (input?.value || "").trim();
+  localStorage.setItem("sbu2_sync_url", sbuSyncUrl);
+  sbuSyncSetStatus(sbuSyncUrl ? "URLを保存しました" : "未設定");
+  showToast("同期先URLを保存しました");
+}
+function sbuSyncToggle(){
+  if(!sbuSyncUrl){
+    showToast("先に同期先URLを保存してください");
+    return;
+  }
+  sbuSyncEnabled = !sbuSyncEnabled;
+  localStorage.setItem("sbu2_sync_enabled", sbuSyncEnabled ? "1" : "0");
+  sbuSyncUpdateToggleBtn();
+  if(sbuSyncEnabled){ sbuSyncStart(); } else { sbuSyncStop(); }
+}
+function sbuSyncUpdateToggleBtn(){
+  const btn = document.getElementById("sbu-sync-toggle");
+  if(!btn) return;
+  btn.textContent = "同期：" + (sbuSyncEnabled ? "ON" : "OFF");
+  btn.className = "btn-sm" + (sbuSyncEnabled ? " btn-blue" : "");
+}
+function sbuSyncStart(){
+  sbuSyncStop();
+  sbuSyncPullAll();
+  sbuSyncTimer = setInterval(()=>sbuSyncPullAll(), 20000);
+}
+function sbuSyncStop(){
+  if(sbuSyncTimer){ clearInterval(sbuSyncTimer); sbuSyncTimer=null; }
+}
+/* 1件のkey/jsonをスプレッドシートへ送信（失敗しても画面操作は止めない） */
+function sbuSyncPushKey(key, jsonStr){
+  if(!sbuSyncEnabled || !sbuSyncUrl) return;
+  fetch(sbuSyncUrl, {
+    method: "POST",
+    headers: {"Content-Type": "text/plain;charset=utf-8"}, /* プリフライト回避のため text/plain で送る */
+    body: JSON.stringify({key, json: jsonStr})
+  }).then(()=>{
+    sbuSyncSetStatus("送信済み："+new Date().toLocaleTimeString());
+  }).catch(()=>{
+    sbuSyncSetStatus("⚠ 送信失敗（通信環境を確認してください）");
+  });
+}
+/* 指定BU・月の実績/計画をまとめて送信 */
+function sbuSyncPushDept(dept, month){
+  if(!sbuSyncEnabled || !sbuSyncUrl) return;
+  const m = month ?? getMonth();
+  sbuSyncPushKey(sk(dept,"actuals",m), localStorage.getItem(sk(dept,"actuals",m)) || "{}");
+  sbuSyncPushKey(sk(dept,"plans",m),   localStorage.getItem(sk(dept,"plans",m))   || "{}");
+}
+/* スプレッドシートから全件取得し、ローカルより新しければ反映 */
+function sbuSyncPullAll(manual){
+  if(!sbuSyncUrl || sbuSyncPulling) return;
+  sbuSyncPulling = true;
+  if(manual) sbuSyncSetStatus("同期中…");
+  fetch(sbuSyncUrl + "?action=getAll")
+    .then(r=>r.json())
+    .then(res=>{
+      sbuSyncPulling = false;
+      if(!res || !res.ok || !res.data){ sbuSyncSetStatus("⚠ 取得に失敗しました"); return; }
+      let changed = 0;
+      Object.keys(res.data).forEach(key=>{
+        const remote = res.data[key];
+        const localJson = localStorage.getItem(key);
+        if(localJson !== remote.json){
+          localStorage.setItem(key, remote.json);
+          changed++;
+        }
+      });
+      sbuSyncSetStatus(`最終同期：${new Date().toLocaleTimeString()}（${changed}件更新）`);
+      if(changed>0){
+        loadAll();
+        fillDefaultLY();
+        renderCurrent();
+      }
+    })
+    .catch(()=>{
+      sbuSyncPulling = false;
+      sbuSyncSetStatus("⚠ 取得に失敗しました（URL・公開設定を確認してください）");
+    });
+}
+function sbuSyncInit(){
+  const input = document.getElementById("sbu-sync-url");
+  if(input) input.value = sbuSyncUrl;
+  sbuSyncUpdateToggleBtn();
+  if(sbuSyncUrl && sbuSyncEnabled){
+    sbuSyncSetStatus("接続中…");
+    sbuSyncStart();
+  } else if(sbuSyncUrl){
+    sbuSyncSetStatus("同期はOFFです");
+  }
+}
+
 function savePDCA(dept,wi){
   try{
     const pt=document.getElementById(`txt-plan-${dept}-${wi}`)?.value||"";
@@ -1950,6 +2075,7 @@ function confirmReset(){
     ["actuals","plans","plan_txt","action_txt"].forEach(k=>localStorage.removeItem(sk(dept,k)));
     actuals[dept]={};plans[dept]={};
     stores.forEach(s=>{actuals[dept][s]={};plans[dept][s]={};});
+    sbuSyncPushDept(dept);
   });
   showToast("リセットしました");
   renderCurrent();
@@ -2034,6 +2160,7 @@ function ua(dept,s,d,v){
   if(!isNaN(n)&&n>=0) actuals[dept][s][d]={val:n,isLY:false};
   else delete actuals[dept][s][d];
   saveAll();
+  sbuSyncPushDept(dept);
   renderDeptKPI(dept);renderDeptStores(dept);updateCalcCells(dept);
 }
 function up2(dept,s,d,v){
@@ -2043,6 +2170,7 @@ function up2(dept,s,d,v){
   if(!isNaN(n)&&n>=0) plans[dept][s][d]=n;
   else delete plans[dept][s][d];
   saveAll();
+  sbuSyncPushDept(dept);
   renderDeptKPI(dept);renderDeptStores(dept);updateCalcCells(dept);
 }
 
@@ -2091,6 +2219,7 @@ function bulkFill(dept,mode){
     });
   });
   saveAll();renderDept(dept);
+  sbuSyncPushDept(dept);
   showToast(`計画に${count}件を入力しました`);
 }
 function bulkClear(dept){
@@ -2102,6 +2231,7 @@ function bulkClear(dept){
   let count=0;
   targets.forEach(s=>days.forEach(d=>{if(plans[dept]?.[s]?.[d]!=null){delete plans[dept][s][d];count++;}}));
   saveAll();renderDept(dept);
+  sbuSyncPushDept(dept);
   showToast(`計画を${count}件消去しました`);
 }
 
@@ -4031,18 +4161,23 @@ function renderDeptTable(dept){
 
   /* thead（全週共通） */
   let thead=`<tr><th style="min-width:28px">週</th><th class="lc" style="min-width:38px">日付</th><th style="min-width:20px">曜</th>`;
+  thead+=`<th colspan="${span}" class="sh sep" style="background:#1e3a5f">全店計</th>`;
   stores.forEach(s=>thead+=`<th colspan="${span}" class="sh sep">${s}店</th>`);
   thead+=`</tr><tr><th></th><th></th><th></th>`;
-  stores.forEach(()=>{
-    if(daily&&!weekly) thead+=`<th class="sep" style="color:#aaa;min-width:58px">日割予算</th>`;
-    if(plan&&!weekly)  thead+=`<th class="${daily&&!weekly?'':'sep'}" style="color:#ce93d8;min-width:62px">計画</th>`;
-    if(!daily&&!plan)  thead+=`<th class="sep"></th>`;
-    thead+=`<th>実績</th>`;
-    if(budgetRatio) thead+=`<th style="min-width:50px">予算比</th>`;
-    thead+=`<th style="min-width:50px">計画比</th>`;
-    if(lastyear) thead+=`<th>昨対比</th>`;
-    if(diff)     thead+=`<th>差異</th>`;
-  });
+  const headCellsBlock=()=>{
+    let h="";
+    if(daily&&!weekly) h+=`<th class="sep" style="color:#aaa;min-width:58px">日割予算</th>`;
+    if(plan&&!weekly)  h+=`<th class="${daily&&!weekly?'':'sep'}" style="color:#ce93d8;min-width:62px">計画</th>`;
+    if(!daily&&!plan)  h+=`<th class="sep"></th>`;
+    h+=`<th>実績</th>`;
+    if(budgetRatio) h+=`<th style="min-width:50px">予算比</th>`;
+    h+=`<th style="min-width:50px">計画比</th>`;
+    if(lastyear) h+=`<th>昨対比</th>`;
+    if(diff)     h+=`<th>差異</th>`;
+    return h;
+  };
+  thead+=headCellsBlock();
+  stores.forEach(()=>{ thead+=headCellsBlock(); });
   thead+=`</tr>`;
 
   /* 週ごとにテーブル＋PDCA欄を生成 */
@@ -4060,6 +4195,23 @@ function renderDeptTable(dept){
         const cls=dow===0?"sun":dow===6?"sat":"";
         tbody+=`<tr class="${cls}"><td class="cc" style="font-size:10px;color:#aaa">${di===0?getWeeks()[wi].label:""}</td>
           <td class="lc">${m}/${d}</td><td class="cc">${DOW[dow]}</td>`;
+        /* 全店計ブロック */
+        {
+          const dtb=deptSumB(dept,[d]), dta=deptSumA(dept,[d]), dtl=deptSumL(dept,[d]), dtp=deptSumP(dept,[d]);
+          const dbase=dtp!=null?dtp:dtb;
+          const dr=dta!=null&&dbase?dta/dbase:null;
+          const dbr=dta!=null&&dtb?dta/dtb:null;
+          const dlyr=dta!=null&&dtl?dta/dtl:null;
+          const ddv=dta!=null?dta-dbase:null;
+          if(daily) tbody+=`<td class="sep" style="color:#aaa;font-weight:500">${f(dtb||null)}</td>`;
+          if(plan)  tbody+=`<td class="${!daily?'sep':''}" style="color:#6a1b9a;font-weight:500">${f(dtp)}</td>`;
+          if(!daily&&!plan) tbody+=`<td class="sep"></td>`;
+          tbody+=`<td style="font-weight:500">${f(dta)}</td>`;
+          if(budgetRatio) tbody+=`<td class="${rc(dbr)}" style="font-weight:500">${fr(dbr)}</td>`;
+          tbody+=`<td class="${rc(dr)}" style="font-weight:500">${fr(dr)}</td>`;
+          if(lastyear) tbody+=`<td class="${rc(dlyr)}" style="font-weight:500">${fr(dlyr)}</td>`;
+          if(diff)     tbody+=`<td class="${dc(ddv)}" style="font-weight:500">${fd(ddv)}</td>`;
+        }
         stores.forEach((s,si)=>{
           const bd=getBD(s,d,dept),b=bd?.budget,ly=bd?.ly;
           const p=plans[dept]?.[s]?.[d],a=getVal(dept,s,d),auto=isLY(dept,s,d);
@@ -4080,6 +4232,22 @@ function renderDeptTable(dept){
 
     /* 小計行 */
     tbody+=`<tr class="sub"><td></td><td class="lc" colspan="2">${getWeeks()[wi].label}　小計</td>`;
+    {
+      const dtb=deptSumB(dept,wd), dta=deptSumA(dept,wd), dtl=deptSumL(dept,wd), dtp=deptSumP(dept,wd);
+      const dbase=dtp!=null?dtp:dtb;
+      const dr=dta!=null&&dbase?dta/dbase:null;
+      const dbr=dta!=null&&dtb?dta/dtb:null;
+      const dlyr=dta!=null&&dtl?dta/dtl:null;
+      const ddv=dta!=null?dta-dbase:null;
+      if(daily&&!weekly) tbody+=`<td class="sep" style="color:#aaa">${f(dtb)}</td>`;
+      if(plan&&!weekly)  tbody+=`<td class="${!(daily&&!weekly)?'sep':''}" style="color:#6a1b9a">${f(dtp)}</td>`;
+      if(!daily&&!plan)  tbody+=`<td class="sep"></td>`;
+      tbody+=`<td>${f(dta)}</td>`;
+      if(budgetRatio) tbody+=`<td class="${rc(dbr)}">${fr(dbr)}</td>`;
+      tbody+=`<td class="${rc(dr)}">${fr(dr)}</td>`;
+      if(lastyear) tbody+=`<td class="${rc(dlyr)}">${fr(dlyr)}</td>`;
+      if(diff)     tbody+=`<td class="${dc(ddv)}">${fd(ddv)}</td>`;
+    }
     stores.forEach(s=>{
       const b=sumB(dept,s,wd),a=sumA(dept,s,wd),ly=sumL(dept,s,wd),p=sumP(dept,s,wd);
       const r=ratioW(dept,s,wd),lyr=a!=null&&ly?a/ly:null,dv=a!=null?a-(p!=null?p:b):null;
@@ -4251,6 +4419,7 @@ const UPLOADED_ACTUALS_6 = {"生活消耗":{"上津役":{"1":{"val":701,"isLY":f
 fillDefaultLY();
 saveAll();
 lastSelectedMonth=getMonth();
+sbuSyncInit();
 loadNavOrder();
 renderNav();
 loadSCCData();
